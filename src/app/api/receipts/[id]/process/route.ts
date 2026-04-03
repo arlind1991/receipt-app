@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { extractReceiptDataFromImage } from "@/lib/receipt-ocr";
+import {
+  extractReceiptDataFromImage,
+  getReceiptOcrModels,
+} from "@/lib/receipt-ocr";
 import {
   getAuthenticatedUserFromAccessToken,
   getSupabaseAdminClient,
@@ -53,29 +56,38 @@ export async function POST(request: NextRequest, context: RouteContext) {
     return NextResponse.json({ ok: true, status: "done" });
   }
 
+  const { ocrModel, structuredModel } = getReceiptOcrModels();
+  console.info("[receipt-processing:start]", {
+    image_path: receipt.image_path,
+    models: { ocrModel, structuredModel },
+    receipt_id: receipt.id,
+  });
+
   const { data: image, error: downloadError } = await supabase.storage
     .from("receipts")
     .download(receipt.image_path);
 
-  console.info("[receipt-processing]", {
-    image_download_succeeded: !downloadError && !!image,
-    receiptId: receipt.id,
-    userId: authResult.data.id,
-  });
-
   if (downloadError || !image) {
-    await markReceiptFailed(
-      supabase,
-      receipt.id,
-      downloadError?.message ?? "Receipt image could not be loaded.",
-    );
-    return NextResponse.json(
-      { error: downloadError?.message ?? "Receipt image could not be loaded." },
-      { status: 500 },
-    );
+    const reason = downloadError?.message ?? "Receipt image could not be loaded.";
+    console.warn("[receipt-processing:image]", {
+      image_download_success: false,
+      image_path: receipt.image_path,
+      receipt_id: receipt.id,
+      reason,
+    });
+    await markReceiptFailed(supabase, receipt.id, reason);
+    return NextResponse.json({ error: reason }, { status: 500 });
   }
 
   const arrayBuffer = await image.arrayBuffer();
+  console.info("[receipt-processing:image]", {
+    byte_size: arrayBuffer.byteLength,
+    content_type: image.type || "image/jpeg",
+    image_download_success: true,
+    image_path: receipt.image_path,
+    receipt_id: receipt.id,
+  });
+
   const extractionResult = await extractReceiptDataFromImage({
     contentType: image.type || "image/jpeg",
     imageBuffer: Buffer.from(arrayBuffer),
@@ -83,19 +95,71 @@ export async function POST(request: NextRequest, context: RouteContext) {
   });
 
   if (!extractionResult.ok) {
+    console.warn("[receipt-processing:exception]", {
+      failure_reason: extractionResult.error,
+      receipt_id: receipt.id,
+    });
     await markReceiptFailed(supabase, receipt.id, extractionResult.error);
     return NextResponse.json({ error: extractionResult.error }, { status: 500 });
   }
 
-  console.info("[receipt-processing]", {
-    extracted_fields: extractionResult.data.debug.extracted_fields,
-    failure_reason: extractionResult.data.failure_reason,
+  console.info("[receipt-processing:openai]", {
+    final_extracted_fields: extractionResult.data.debug.extracted_fields,
+    models: {
+      ocr: extractionResult.data.debug.ocr_stage.model,
+      structured: extractionResult.data.debug.structured_stage.model,
+    },
+    ocr_empty_reason: extractionResult.data.debug.ocr_stage.empty_reason,
+    ocr_request_image_input_sent: extractionResult.data.debug.ocr_stage.image_input_sent,
+    ocr_request_shape: extractionResult.data.debug.ocr_stage.request_shape,
+    ocr_response_field_read: extractionResult.data.debug.ocr_stage.response_field_read,
+    ocr_response_empty: extractionResult.data.debug.ocr_stage.response_empty,
     ocr_text_returned: extractionResult.data.debug.ocr_text_returned,
-    receiptId: receipt.id,
+    raw_ocr_response_text: extractionResult.data.debug.ocr_stage.assistant_text.slice(0, 1500),
+    receipt_id: receipt.id,
+    structured_empty_reason: extractionResult.data.debug.structured_stage.empty_reason,
+    structured_request_shape: extractionResult.data.debug.structured_stage.request_shape,
+    structured_response_field_read:
+      extractionResult.data.debug.structured_stage.response_field_read,
     structured_json_returned: extractionResult.data.debug.structured_json_returned,
+    structured_raw_assistant_content:
+      extractionResult.data.debug.structured_stage.assistant_text.slice(0, 1500),
   });
 
   const nextStatus = extractionResult.data.should_fail ? "failed" : "done";
+  const extractionError =
+    extractionResult.data.failure_reason ??
+    (extractionResult.data.is_partial
+      ? "Structured extraction was incomplete; saved partial OCR results."
+      : null);
+  const parsedDebugJson = JSON.stringify(
+    {
+      extracted_fields: extractionResult.data.debug.extracted_fields,
+      heuristic_debug: extractionResult.data.debug.heuristic_debug,
+      ocr_stage: extractionResult.data.debug.ocr_stage,
+      structured_stage: extractionResult.data.debug.structured_stage,
+      structured_text: extractionResult.data.parsed_json_text,
+    },
+    null,
+    2,
+  );
+
+  console.info("[receipt-processing:result]", {
+    exact_failure_reason: extractionError,
+    extracted_fields: extractionResult.data.debug.extracted_fields,
+    final_fields: {
+      category: extractionResult.data.category,
+      currency: extractionResult.data.currency,
+      merchant_name: extractionResult.data.merchant_name,
+      receipt_date: extractionResult.data.receipt_date,
+      receipt_time: extractionResult.data.debug.heuristic_debug.receipt_time,
+      total_amount: extractionResult.data.total_amount,
+      vat_amount: extractionResult.data.vat_amount,
+    },
+    final_status: nextStatus,
+    parsed_json_result: extractionResult.data.parsed_json_text,
+    receipt_id: receipt.id,
+  });
 
   const { error: updateError } = await supabase
     .from("receipts")
@@ -107,23 +171,35 @@ export async function POST(request: NextRequest, context: RouteContext) {
       currency: extractionResult.data.currency,
       category: extractionResult.data.category,
       raw_ocr_text: extractionResult.data.raw_ocr_text || null,
-      parsed_ocr_json: extractionResult.data.debug.parsed_json,
-      extraction_error:
-        extractionResult.data.should_fail || extractionResult.data.is_partial
-          ? extractionResult.data.failure_reason ?? extractionResult.data.debug.extraction_error
-          : extractionResult.data.debug.extraction_error,
+      parsed_ocr_json: parsedDebugJson,
+      extraction_error: extractionError,
       status: nextStatus,
     })
     .eq("id", receipt.id)
     .eq("user_id", authResult.data.id);
 
   if (updateError) {
+    console.warn("[receipt-processing:update]", {
+      receipt_id: receipt.id,
+      reason: updateError.message,
+    });
     await markReceiptFailed(supabase, receipt.id, updateError.message);
     return NextResponse.json({ error: updateError.message }, { status: 500 });
   }
 
   return NextResponse.json({
     ok: true,
+    debug: {
+      image_download_succeeded: extractionResult.data.debug.image_download_succeeded,
+      ocr_text_returned: extractionResult.data.debug.ocr_text_returned,
+      parsed_json_result: extractionResult.data.parsed_json_text,
+      raw_model_response:
+        extractionResult.data.debug.structured_stage.assistant_text ||
+        extractionResult.data.debug.ocr_stage.assistant_text,
+      response_empty:
+        extractionResult.data.debug.structured_stage.response_empty &&
+        extractionResult.data.debug.ocr_stage.response_empty,
+    },
     partial: extractionResult.data.is_partial,
     status: nextStatus,
   });
@@ -134,9 +210,9 @@ async function markReceiptFailed(
   receiptId: string,
   reason: string,
 ) {
-  console.warn("[receipt-processing]", {
-    failure_reason: reason,
-    receiptId,
+  console.warn("[receipt-processing:failed]", {
+    exact_failure_reason: reason,
+    receipt_id: receiptId,
   });
   await supabase
     .from("receipts")
