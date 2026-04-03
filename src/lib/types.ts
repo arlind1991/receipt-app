@@ -1,0 +1,47 @@
+export type Result<T> =
+  | { ok: true; data: T }
+  | { ok: false; error: string };
+
+export type FolderRow = {
+  id: string;
+  user_id: string;
+  name: string;
+  created_at: string;
+};
+
+export type ReceiptRow = {
+  id: string;
+  user_id: string;
+  folder_id: string | null;
+  image_path: string;
+  status: string;
+  merchant_name: string | null;
+  receipt_date: string | null;
+  total_amount: number | null;
+  vat_amount: number | null;
+  category: string | null;
+  raw_ocr_text: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ReceiptInsert = {
+  id: string;
+  user_id: string;
+  folder_id: string | null;
+  image_path: string;
+  status: string;
+  merchant_name: string | null;
+  receipt_date: string | null;
+  total_amount: number | null;
+  vat_amount: number | null;
+  category: string | null;
+  raw_ocr_text: string | null;
+};
+
+export type ReceiptListItem = ReceiptRow & {
+  folder_name: string | null;
+  signed_image_url: string | null;
+};
+
+export type ReceiptDetail = ReceiptListItem;
