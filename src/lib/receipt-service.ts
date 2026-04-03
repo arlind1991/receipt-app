@@ -1,6 +1,8 @@
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import type {
+  DuplicateReceiptCandidate,
   FolderRow,
+  ReceiptDetectionResult,
   ReceiptDetail,
   ReceiptEditableFields,
   ReceiptInsert,
@@ -211,6 +213,35 @@ export async function triggerReceiptProcessing(receiptId: string): Promise<Resul
   return { ok: true, data: undefined };
 }
 
+export async function analyzeCapturedReceipt(blob: Blob): Promise<Result<ReceiptDetectionResult>> {
+  const accessToken = await getAccessToken();
+  if (!accessToken) {
+    return { ok: false, error: "You need to sign in before scanning receipts." };
+  }
+
+  const formData = new FormData();
+  formData.append("image", blob, "receipt.jpg");
+
+  const response = await fetch("/api/capture/analyze", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const json = (await response.json().catch(() => null)) as { error?: string } | null;
+    return {
+      ok: false,
+      error: json?.error ?? "Could not analyze the captured image.",
+    };
+  }
+
+  const json = (await response.json()) as ReceiptDetectionResult;
+  return { ok: true, data: json };
+}
+
 export async function updateReceiptFields(
   receiptId: string,
   fields: ReceiptEditableFields,
@@ -238,6 +269,58 @@ export async function updateReceiptFields(
   }
 
   return { ok: true, data: undefined };
+}
+
+export async function detectPotentialDuplicates(params: {
+  merchantName: string | null;
+  receiptDate: string | null;
+  receiptId: string;
+  totalAmount: number | null;
+  userId: string;
+}): Promise<Result<DuplicateReceiptCandidate[]>> {
+  const supabase = getSupabaseBrowserClient();
+  if (!supabase) {
+    return { ok: false, error: "Supabase environment variables are missing." };
+  }
+
+  if (!params.merchantName || !params.receiptDate || params.totalAmount == null) {
+    return { ok: true, data: [] };
+  }
+
+  const { data, error } = await supabase
+    .from("receipts")
+    .select("id, merchant_name, receipt_date, total_amount, created_at")
+    .eq("user_id", params.userId)
+    .eq("receipt_date", params.receiptDate)
+    .eq("total_amount", params.totalAmount)
+    .neq("id", params.receiptId)
+    .returns<
+      Array<{
+        id: string;
+        merchant_name: string | null;
+        receipt_date: string | null;
+        total_amount: number | null;
+        created_at: string;
+      }>
+    >();
+
+  if (error) {
+    return { ok: false, error: error.message };
+  }
+
+  const normalizedMerchant = normalizeMerchantForMatch(params.merchantName);
+  const duplicates = (data ?? [])
+    .map((item) => ({
+      ...item,
+      similarity: merchantSimilarity(
+        normalizedMerchant,
+        normalizeMerchantForMatch(item.merchant_name),
+      ),
+    }))
+    .filter((item) => item.similarity >= 0.55)
+    .sort((left, right) => right.similarity - left.similarity);
+
+  return { ok: true, data: duplicates };
 }
 
 export async function deleteReceipt(receiptId: string): Promise<Result<void>> {
@@ -344,4 +427,46 @@ function buildReceiptImagePath(userId: string, receiptId: string) {
   const month = String(now.getUTCMonth() + 1).padStart(2, "0");
 
   return `${userId}/${year}/${month}/receipt-${receiptId}.jpg`;
+}
+
+function normalizeMerchantForMatch(value: string | null) {
+  if (!value) {
+    return "";
+  }
+
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(
+      /\b(ltd|limited|store|shop|uk|inc|llc|co|company|restaurants?|cafe|coffee)\b/g,
+      " ",
+    )
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function merchantSimilarity(left: string, right: string) {
+  if (!left || !right) {
+    return 0;
+  }
+
+  if (left === right) {
+    return 1;
+  }
+
+  const leftTokens = new Set(left.split(" ").filter(Boolean));
+  const rightTokens = new Set(right.split(" ").filter(Boolean));
+  const intersection = [...leftTokens].filter((token) => rightTokens.has(token)).length;
+  const union = new Set([...leftTokens, ...rightTokens]).size;
+
+  if (union === 0) {
+    return 0;
+  }
+
+  const jaccard = intersection / union;
+  if (left.includes(right) || right.includes(left)) {
+    return Math.max(jaccard, 0.7);
+  }
+
+  return jaccard;
 }

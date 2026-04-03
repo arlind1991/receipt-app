@@ -32,6 +32,8 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 
   const payload = (await request.json()) as {
     category?: string | null;
+    currency?: string | null;
+    folder_id?: string | null;
     merchant_name?: string | null;
     receipt_date?: string | null;
     total_amount?: number | null;
@@ -45,7 +47,27 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     return NextResponse.json({ error: supabaseServerEnvError }, { status: 500 });
   }
 
+  const nextFolderId = normalizeFolderId(payload.folder_id);
+  if (nextFolderId) {
+    const { data: folder, error: folderError } = await supabase
+      .from("folders")
+      .select("id")
+      .eq("id", nextFolderId)
+      .eq("user_id", authResult.data.id)
+      .maybeSingle<{ id: string }>();
+
+    if (folderError) {
+      return NextResponse.json({ error: folderError.message }, { status: 400 });
+    }
+
+    if (!folder) {
+      return NextResponse.json({ error: "Folder not found." }, { status: 400 });
+    }
+  }
+
   const updatePayload = {
+    currency: normalizeCurrency(payload.currency),
+    folder_id: nextFolderId,
     merchant_name: normalizeText(payload.merchant_name),
     receipt_date: normalizeDate(payload.receipt_date),
     total_amount: normalizeNumber(payload.total_amount),
@@ -140,4 +162,14 @@ function normalizeDate(value: string | null | undefined) {
 
 function normalizeNumber(value: number | null | undefined) {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function normalizeCurrency(value: string | null | undefined) {
+  const trimmed = value?.trim().toUpperCase();
+  return trimmed && trimmed.length === 3 ? trimmed : null;
+}
+
+function normalizeFolderId(value: string | null | undefined) {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
 }

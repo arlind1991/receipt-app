@@ -3,8 +3,10 @@
 import { useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { StatusBanner } from "@/components/status-banner";
-import { getSupabaseBrowserClient } from "@/lib/supabase/client";
-import { initializeSession, supabaseEnvError } from "@/lib/supabase/session";
+import {
+  completeAuthSessionFromUrl,
+  supabaseEnvError,
+} from "@/lib/supabase/session";
 
 export function AuthCallback() {
   const router = useRouter();
@@ -12,19 +14,18 @@ export function AuthCallback() {
 
   useEffect(() => {
     async function completeAuth() {
-      const supabase = getSupabaseBrowserClient();
-      const code = searchParams.get("code");
-
-      if (supabase && code) {
-        const { error } = await supabase.auth.exchangeCodeForSession(code);
-        if (error) {
-          router.replace("/");
-          return;
-        }
+      const result = await completeAuthSessionFromUrl();
+      if (!result.ok) {
+        router.replace("/");
+        return;
       }
 
-      const user = await initializeSession({ force: true });
-      if (user) {
+      if (result.type === "recovery") {
+        router.replace("/auth/reset-password");
+        return;
+      }
+
+      if (result.user) {
         router.replace("/camera");
         return;
       }

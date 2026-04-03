@@ -553,13 +553,14 @@ function applyFallbackHeuristics(rawText: string, fields: StructuredReceiptField
     merged.currency = inferCurrency(rawText);
   }
 
-  if (!merged.category) {
-    merged.category = inferCategoryFromMerchant(merged.merchant_name);
-  }
-
   if (!merged.receipt_date) {
     merged.receipt_date = dateCandidate.date;
   }
+
+  merged.category = resolveReceiptCategory({
+    aiCategory: merged.category,
+    merchantName: merged.merchant_name,
+  });
 
   return {
     debug: {
@@ -615,37 +616,198 @@ function inferCurrency(rawText: string) {
   return null;
 }
 
-function inferCategoryFromMerchant(merchantName: string | null) {
+function resolveReceiptCategory(params: {
+  aiCategory: string | null;
+  merchantName: string | null;
+}) {
+  const mappedCategory = mapMerchantToCategory(params.merchantName);
+  if (mappedCategory) {
+    return mappedCategory;
+  }
+
+  const inferredCategory = inferCategoryFromMerchantName(params.merchantName);
+  if (inferredCategory) {
+    return inferredCategory;
+  }
+
+  return normalizeCategory(params.aiCategory);
+}
+
+function mapMerchantToCategory(merchantName: string | null) {
   const name = merchantName?.toLowerCase();
   if (!name) {
     return null;
   }
 
-  if (containsKeyword(name, ["tesco", "sainsbury", "aldi", "lidl", "waitrose", "morrisons"])) {
+  const merchantCategoryMappings: Array<{
+    aliases: string[];
+    category: string;
+  }> = [
+    {
+      aliases: [
+        "tesco",
+        "sainsbury",
+        "sainsbury's",
+        "aldi",
+        "lidl",
+        "waitrose",
+        "morrisons",
+        "asda",
+        "marks & spencer food",
+        "m&s food",
+      ],
+      category: "Groceries",
+    },
+    {
+      aliases: [
+        "starbucks",
+        "costa",
+        "pret",
+        "pret a manger",
+        "mcdonald",
+        "burger king",
+        "subway",
+        "kfc",
+        "nando",
+        "domino",
+        "pizza hut",
+      ],
+      category: "Dining",
+    },
+    {
+      aliases: [
+        "uber",
+        "uber trip",
+        "trainline",
+        "national rail",
+        "british airways",
+        "easyjet",
+        "ryanair",
+        "airbnb",
+        "booking.com",
+      ],
+      category: "Travel",
+    },
+    {
+      aliases: ["shell", "bp", "esso", "texaco"],
+      category: "Fuel",
+    },
+    {
+      aliases: ["boots", "superdrug", "lloyds pharmacy"],
+      category: "Healthcare",
+    },
+    {
+      aliases: [
+        "amazon",
+        "ikea",
+        "argos",
+        "primark",
+        "john lewis",
+        "currys",
+        "currys pc world",
+        "b&q",
+        "whsmith",
+      ],
+      category: "Shopping",
+    },
+  ];
+
+  const matchedCategory = merchantCategoryMappings.find(({ aliases }) =>
+    aliases.some((alias) => name.includes(alias)),
+  );
+
+  return matchedCategory?.category ?? null;
+}
+
+function inferCategoryFromMerchantName(merchantName: string | null) {
+  const name = merchantName?.toLowerCase();
+  if (!name) {
+    return null;
+  }
+
+  if (
+    containsKeyword(name, [
+      "tesco",
+      "sainsbury",
+      "aldi",
+      "lidl",
+      "waitrose",
+      "morrisons",
+      "asda",
+      "market",
+      "grocer",
+      "foodhall",
+    ])
+  ) {
     return "Groceries";
   }
 
-  if (containsKeyword(name, ["uber", "train", "rail", "air", "airport", "hotel"])) {
+  if (
+    containsKeyword(name, [
+      "uber",
+      "train",
+      "rail",
+      "air",
+      "airport",
+      "hotel",
+      "travel",
+      "airways",
+      "flight",
+      "taxi",
+    ])
+  ) {
     return "Travel";
   }
 
-  if (containsKeyword(name, ["cafe", "coffee", "restaurant", "pizza", "burger", "bar"])) {
+  if (
+    containsKeyword(name, [
+      "cafe",
+      "coffee",
+      "restaurant",
+      "pizza",
+      "burger",
+      "bar",
+      "kitchen",
+      "bistro",
+      "grill",
+      "eat",
+    ])
+  ) {
     return "Dining";
   }
 
-  if (containsKeyword(name, ["shell", "bp", "esso"])) {
+  if (containsKeyword(name, ["shell", "bp", "esso", "fuel", "petrol", "diesel"])) {
     return "Fuel";
   }
 
-  if (containsKeyword(name, ["boots", "pharmacy", "clinic"])) {
+  if (
+    containsKeyword(name, ["boots", "pharmacy", "clinic", "dentist", "optician", "health"])
+  ) {
     return "Healthcare";
   }
 
-  if (containsKeyword(name, ["amazon", "shop", "store", "ikea", "argos"])) {
+  if (
+    containsKeyword(name, [
+      "amazon",
+      "shop",
+      "store",
+      "ikea",
+      "argos",
+      "retail",
+      "outlet",
+      "home",
+      "fashion",
+    ])
+  ) {
     return "Shopping";
   }
 
-  return "Other";
+  return null;
+}
+
+function normalizeCategory(value: string | null) {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
 }
 
 function containsKeyword(value: string, keywords: string[]) {

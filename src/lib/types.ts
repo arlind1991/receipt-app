@@ -53,9 +53,34 @@ export type ReceiptListItem = ReceiptRow & {
 export type ReceiptDetail = ReceiptListItem;
 
 export type ReceiptEditableFields = {
+  currency: string | null;
+  folder_id: string | null;
   merchant_name: string | null;
   receipt_date: string | null;
   total_amount: number | null;
   vat_amount: number | null;
   category: string | null;
+};
+
+export type DuplicateReceiptCandidate = {
+  id: string;
+  merchant_name: string | null;
+  receipt_date: string | null;
+  total_amount: number | null;
+  created_at: string;
+  similarity: number;
+};
+
+export type ReceiptDetectionBox = {
+  height: number;
+  index: number;
+  width: number;
+  x: number;
+  y: number;
+};
+
+export type ReceiptDetectionResult = {
+  boxes: ReceiptDetectionBox[];
+  detectedMultiple: boolean;
+  receiptCount: number;
 };

@@ -1,14 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import type { User } from "@supabase/supabase-js";
 import { AppNav } from "@/components/app-nav";
 import { StatusBanner } from "@/components/status-banner";
 import { deleteAllUserReceipts, refreshAllAppCaches } from "@/lib/receipt-service";
 import {
   getSessionBootstrapState,
   signOutCurrentUser,
+  subscribeToSessionBootstrap,
 } from "@/lib/supabase/session";
 
 const showDevTools =
@@ -20,10 +22,15 @@ export function AccountScreen() {
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [isDeletingAll, setIsDeletingAll] = useState(false);
-  const email = useMemo(
-    () => getSessionBootstrapState().user?.email ?? "Signed in",
-    [],
-  );
+  const [user, setUser] = useState(getSessionBootstrapState().user);
+  const email = useMemo(() => user?.email ?? "Signed in", [user]);
+  const providerInfo = useMemo(() => getProviderInfo(user), [user]);
+
+  useEffect(() => {
+    return subscribeToSessionBootstrap((state) => {
+      setUser(state.user);
+    });
+  }, []);
 
   async function handleSignOut() {
     setIsSigningOut(true);
@@ -80,6 +87,9 @@ export function AccountScreen() {
             Signed-in email
           </p>
           <p className="mt-3 text-lg font-medium text-white">{email}</p>
+          <p className="mt-2 text-sm text-[var(--text-secondary)]">
+            Provider: {providerInfo}
+          </p>
           <button
             type="button"
             onClick={() => void handleSignOut()}
@@ -111,4 +121,35 @@ export function AccountScreen() {
       <AppNav />
     </main>
   );
+}
+
+function getProviderInfo(user: User | null) {
+  if (!user) {
+    return "Unknown";
+  }
+
+  const providers = new Set<string>();
+  const primaryProvider = user.app_metadata?.provider;
+  if (typeof primaryProvider === "string" && primaryProvider.length > 0) {
+    providers.add(primaryProvider);
+  }
+
+  user.identities?.forEach((identity) => {
+    if (identity.provider) {
+      providers.add(identity.provider);
+    }
+  });
+
+  if (providers.size === 0) {
+    return "Email";
+  }
+
+  return [...providers]
+    .map((provider) => {
+      if (provider === "google") return "Google";
+      if (provider === "apple") return "Apple";
+      if (provider === "email") return "Email";
+      return provider;
+    })
+    .join(", ");
 }

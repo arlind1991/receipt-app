@@ -2,10 +2,12 @@
 /* eslint-disable @next/next/no-img-element */
 
 import Link from "next/link";
-import { useEffect, useEffectEvent, useMemo, useState } from "react";
+import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { StatusBanner } from "@/components/status-banner";
 import {
+  detectPotentialDuplicates,
+  fetchFolders,
   deleteReceipt,
   fetchReceiptDetail,
   triggerReceiptProcessing,
@@ -13,7 +15,12 @@ import {
 } from "@/lib/receipt-service";
 import { ensureBrowserSession, supabaseEnvError } from "@/lib/supabase/session";
 import { formatCurrency, formatReceiptDate, normalizeCurrency } from "@/lib/utils";
-import type { ReceiptDetail, ReceiptEditableFields } from "@/lib/types";
+import type {
+  DuplicateReceiptCandidate,
+  FolderRow,
+  ReceiptDetail,
+  ReceiptEditableFields,
+} from "@/lib/types";
 
 const showReceiptDebug =
   process.env.NODE_ENV !== "production" ||
@@ -32,7 +39,18 @@ export function ReceiptDetailClient({
   const [loading, setLoading] = useState(true);
   const [isSavingEdits, setIsSavingEdits] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [folders, setFolders] = useState<FolderRow[]>([]);
+  const [duplicateCandidates, setDuplicateCandidates] = useState<DuplicateReceiptCandidate[]>([]);
+  const merchantInputRef = useRef<HTMLInputElement | null>(null);
+  const receiptDateInputRef = useRef<HTMLInputElement | null>(null);
+  const totalInputRef = useRef<HTMLInputElement | null>(null);
+  const vatInputRef = useRef<HTMLInputElement | null>(null);
+  const currencyInputRef = useRef<HTMLInputElement | null>(null);
+  const categoryInputRef = useRef<HTMLInputElement | null>(null);
+  const folderSelectRef = useRef<HTMLSelectElement | null>(null);
   const [editValues, setEditValues] = useState({
+    currency: "",
+    folder_id: "",
     merchant_name: "",
     receipt_date: "",
     total_amount: "",
@@ -57,9 +75,55 @@ export function ReceiptDetailClient({
     return result;
   }
 
+  async function fetchAvailableFolders() {
+    if (supabaseEnvError) {
+      return { ok: false as const, error: supabaseEnvError };
+    }
+
+    const user = await ensureBrowserSession();
+    if (!user) {
+      return {
+        ok: false as const,
+        error: "You need to sign in to load folders.",
+      };
+    }
+
+    return fetchFolders(user.id);
+  }
+
+  async function refreshDuplicateCandidates(nextReceipt: {
+    id: string;
+    merchant_name: string | null;
+    receipt_date: string | null;
+    total_amount: number | null;
+  }) {
+    const user = await ensureBrowserSession();
+    if (!user) {
+      setDuplicateCandidates([]);
+      return;
+    }
+
+    const result = await detectPotentialDuplicates({
+      merchantName: nextReceipt.merchant_name,
+      receiptDate: nextReceipt.receipt_date,
+      receiptId: nextReceipt.id,
+      totalAmount: nextReceipt.total_amount,
+      userId: user.id,
+    });
+
+    if (!result.ok) {
+      setDuplicateCandidates([]);
+      return;
+    }
+
+    setDuplicateCandidates(result.data);
+  }
+
   function applyReceipt(nextReceipt: ReceiptDetail) {
     setReceipt(nextReceipt);
     setEditValues({
+      currency: nextReceipt.currency ?? "",
+      folder_id: nextReceipt.folder_id ?? "",
       merchant_name: nextReceipt.merchant_name ?? "",
       receipt_date: nextReceipt.receipt_date ?? "",
       total_amount:
@@ -67,6 +131,7 @@ export function ReceiptDetailClient({
       vat_amount: nextReceipt.vat_amount != null ? String(nextReceipt.vat_amount) : "",
       category: nextReceipt.category ?? "",
     });
+    void refreshDuplicateCandidates(nextReceipt);
   }
 
   const loadReceipt = useEffectEvent(async () => {
@@ -119,6 +184,19 @@ export function ReceiptDetailClient({
   }, [receiptId]);
 
   useEffect(() => {
+    const loadFolders = async () => {
+      const result = await fetchAvailableFolders();
+      if (!result.ok) {
+        return;
+      }
+
+      setFolders(result.data);
+    };
+
+    void loadFolders();
+  }, []);
+
+  useEffect(() => {
     if (receipt?.status !== "processing") {
       return;
     }
@@ -134,6 +212,51 @@ export function ReceiptDetailClient({
     };
   }, [receipt?.status, receiptId]);
 
+  useEffect(() => {
+    if (!receipt) {
+      return;
+    }
+
+    const firstMissingField = getFirstMissingField(receipt);
+    if (!firstMissingField) {
+      return;
+    }
+
+    const target =
+      firstMissingField === "merchant_name"
+        ? merchantInputRef.current
+        : firstMissingField === "receipt_date"
+          ? receiptDateInputRef.current
+          : firstMissingField === "total_amount"
+            ? totalInputRef.current
+            : firstMissingField === "vat_amount"
+              ? vatInputRef.current
+              : firstMissingField === "currency"
+                ? currencyInputRef.current
+                : categoryInputRef.current;
+
+    target?.focus();
+  }, [receipt]);
+
+  useEffect(() => {
+    if (!receipt) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      void refreshDuplicateCandidates({
+        id: receipt.id,
+        merchant_name: editValues.merchant_name.trim() || null,
+        receipt_date: editValues.receipt_date || null,
+        total_amount: editValues.total_amount ? Number(editValues.total_amount) : null,
+      });
+    }, 250);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [editValues.merchant_name, editValues.receipt_date, editValues.total_amount, receipt]);
+
   async function handleSaveEdits(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
@@ -145,6 +268,8 @@ export function ReceiptDetailClient({
     setStatusMessage(null);
 
     const payload: ReceiptEditableFields = {
+      currency: editValues.currency.trim().toUpperCase() || null,
+      folder_id: editValues.folder_id || null,
       merchant_name: editValues.merchant_name.trim() || null,
       receipt_date: editValues.receipt_date || null,
       total_amount: editValues.total_amount ? Number(editValues.total_amount) : null,
@@ -214,6 +339,14 @@ export function ReceiptDetailClient({
     return null;
   }, [receipt]);
 
+  const missingFields = useMemo(() => {
+    if (!receipt) {
+      return [];
+    }
+
+    return getMissingFields(receipt);
+  }, [receipt]);
+
   return (
     <main className="app-shell">
       <section className="mx-auto w-full max-w-md pb-8">
@@ -248,6 +381,19 @@ export function ReceiptDetailClient({
           <div className="space-y-4">
             {statusDescription ? <StatusBanner message={statusDescription} /> : null}
 
+            {missingFields.length > 0 && receipt.status !== "processing" ? (
+              <StatusBanner
+                message={`Missing ${missingFields.join(", ")}. Tap a field below or edit the form to complete the receipt.`}
+              />
+            ) : null}
+
+            {duplicateCandidates.length > 0 ? (
+              <StatusBanner
+                tone="error"
+                message={`Possible duplicate detected. ${formatDuplicateSummary(duplicateCandidates)} You can still save this receipt if it is genuinely separate.`}
+              />
+            ) : null}
+
             <section className="glass-panel overflow-hidden rounded-[32px]">
               {receipt.signed_image_url ? (
                 <img
@@ -272,14 +418,18 @@ export function ReceiptDetailClient({
 
               <div className="mt-4 grid grid-cols-2 gap-3">
                 <FieldCard
+                  missing={!receipt.merchant_name && receipt.status !== "processing"}
                   label="Merchant"
+                  onClick={() => merchantInputRef.current?.focus()}
                   value={
                     receipt.merchant_name ??
                     (receipt.status === "processing" ? "Processing..." : "Unknown")
                   }
                 />
                 <FieldCard
+                  missing={!receipt.receipt_date && receipt.status !== "processing"}
                   label="Receipt date"
+                  onClick={() => receiptDateInputRef.current?.focus()}
                   value={
                     receipt.receipt_date
                       ? formatReceiptDate(receipt.receipt_date, receipt.created_at)
@@ -289,7 +439,9 @@ export function ReceiptDetailClient({
                   }
                 />
                 <FieldCard
+                  missing={receipt.total_amount == null && receipt.status !== "processing"}
                   label="Total"
+                  onClick={() => totalInputRef.current?.focus()}
                   value={
                     receipt.total_amount != null
                       ? formatCurrency(
@@ -302,7 +454,9 @@ export function ReceiptDetailClient({
                   }
                 />
                 <FieldCard
+                  missing={receipt.vat_amount == null && receipt.status !== "processing"}
                   label="VAT"
+                  onClick={() => vatInputRef.current?.focus()}
                   value={
                     receipt.vat_amount != null
                       ? formatCurrency(
@@ -316,10 +470,21 @@ export function ReceiptDetailClient({
                 />
                 <FieldCard
                   label="Currency"
+                  missing={!receipt.currency && receipt.status !== "processing"}
+                  onClick={() => currencyInputRef.current?.focus()}
                   value={receipt.currency ? normalizeCurrency(receipt.currency) : "Unknown"}
                 />
-                <FieldCard label="Category" value={receipt.category ?? "Uncategorized"} />
-                <FieldCard label="Folder" value={receipt.folder_name ?? "Unsorted"} />
+                <FieldCard
+                  missing={!receipt.category && receipt.status !== "processing"}
+                  label="Category"
+                  onClick={() => categoryInputRef.current?.focus()}
+                  value={receipt.category ?? "Uncategorized"}
+                />
+                <FieldCard
+                  label="Folder"
+                  onClick={() => folderSelectRef.current?.focus()}
+                  value={receipt.folder_name ?? "Unsorted"}
+                />
               </div>
 
               <div className="mt-4 rounded-[24px] border border-white/10 bg-white/5 p-4">
@@ -356,9 +521,13 @@ export function ReceiptDetailClient({
 
             <section className="glass-panel rounded-[28px] p-5">
               <p className="eyebrow">Manual Edit</p>
+              <p className="mt-3 text-sm leading-6 text-[var(--text-secondary)]">
+                Tap any missing field above or edit directly here.
+              </p>
               <form onSubmit={(event) => void handleSaveEdits(event)} className="mt-4 space-y-3">
                 <InputField
                   label="Merchant name"
+                  inputRef={merchantInputRef}
                   value={editValues.merchant_name}
                   onChange={(value) =>
                     setEditValues((current) => ({ ...current, merchant_name: value }))
@@ -366,6 +535,7 @@ export function ReceiptDetailClient({
                 />
                 <InputField
                   label="Receipt date"
+                  inputRef={receiptDateInputRef}
                   type="date"
                   value={editValues.receipt_date}
                   onChange={(value) =>
@@ -374,6 +544,7 @@ export function ReceiptDetailClient({
                 />
                 <InputField
                   label="Total amount"
+                  inputRef={totalInputRef}
                   type="number"
                   step="0.01"
                   value={editValues.total_amount}
@@ -383,6 +554,7 @@ export function ReceiptDetailClient({
                 />
                 <InputField
                   label="VAT amount"
+                  inputRef={vatInputRef}
                   type="number"
                   step="0.01"
                   value={editValues.vat_amount}
@@ -391,11 +563,38 @@ export function ReceiptDetailClient({
                   }
                 />
                 <InputField
+                  label="Currency"
+                  inputRef={currencyInputRef}
+                  value={editValues.currency}
+                  onChange={(value) =>
+                    setEditValues((current) => ({
+                      ...current,
+                      currency: value.toUpperCase().slice(0, 3),
+                    }))
+                  }
+                />
+                <InputField
                   label="Category"
+                  inputRef={categoryInputRef}
                   value={editValues.category}
                   onChange={(value) =>
                     setEditValues((current) => ({ ...current, category: value }))
                   }
+                />
+                <SelectField
+                  label="Folder"
+                  selectRef={folderSelectRef}
+                  value={editValues.folder_id}
+                  onChange={(value) =>
+                    setEditValues((current) => ({ ...current, folder_id: value }))
+                  }
+                  options={[
+                    { label: "Unsorted", value: "" },
+                    ...folders.map((folder) => ({
+                      label: folder.name,
+                      value: folder.id,
+                    })),
+                  ]}
                 />
                 <button
                   type="submit"
@@ -458,19 +657,31 @@ function isPartiallyRead(receipt: ReceiptDetail) {
 
 type FieldCardProps = {
   label: string;
+  missing?: boolean;
+  onClick?: () => void;
   value: string;
 };
 
-function FieldCard({ label, value }: FieldCardProps) {
+function FieldCard({ label, missing = false, onClick, value }: FieldCardProps) {
   return (
-    <div className="rounded-[22px] border border-white/10 bg-white/5 p-4">
+    <button
+      type="button"
+      onClick={onClick}
+      className={`rounded-[22px] border p-4 text-left ${
+        missing
+          ? "border-[rgba(255,214,102,0.28)] bg-[rgba(255,214,102,0.08)]"
+          : "border-white/10 bg-white/5"
+      }`}
+    >
       <p className="text-xs uppercase tracking-[0.16em] text-[var(--text-muted)]">{label}</p>
       <p className="mt-2 text-sm font-medium text-white">{value}</p>
-    </div>
+      <p className="mt-3 text-xs text-[var(--text-secondary)]">Tap to edit</p>
+    </button>
   );
 }
 
 type InputFieldProps = {
+  inputRef?: React.RefObject<HTMLInputElement | null>;
   label: string;
   onChange: (value: string) => void;
   step?: string;
@@ -479,6 +690,7 @@ type InputFieldProps = {
 };
 
 function InputField({
+  inputRef,
   label,
   onChange,
   step,
@@ -489,12 +701,82 @@ function InputField({
     <label className="block">
       <span className="mb-2 block text-sm text-[var(--text-secondary)]">{label}</span>
       <input
+        ref={inputRef}
         type={type}
         step={step}
         value={value}
         onChange={(event) => onChange(event.target.value)}
         className="w-full rounded-2xl border border-white/12 bg-white/6 px-4 py-3 text-sm outline-none placeholder:text-[var(--text-muted)] focus:border-[var(--border-strong)]"
       />
+    </label>
+  );
+}
+
+function getMissingFields(receipt: ReceiptDetail) {
+  const fields: string[] = [];
+
+  if (!receipt.merchant_name) fields.push("merchant");
+  if (!receipt.receipt_date) fields.push("receipt date");
+  if (receipt.total_amount == null) fields.push("total");
+  if (receipt.vat_amount == null) fields.push("VAT");
+  if (!receipt.currency) fields.push("currency");
+  if (!receipt.category) fields.push("category");
+
+  return fields;
+}
+
+function getFirstMissingField(receipt: ReceiptDetail) {
+  if (!receipt.merchant_name) return "merchant_name";
+  if (!receipt.receipt_date) return "receipt_date";
+  if (receipt.total_amount == null) return "total_amount";
+  if (receipt.vat_amount == null) return "vat_amount";
+  if (!receipt.currency) return "currency";
+  if (!receipt.category) return "category";
+  return null;
+}
+
+function formatDuplicateSummary(duplicates: DuplicateReceiptCandidate[]) {
+  const [first] = duplicates;
+  if (!first) {
+    return "A receipt with the same details was found.";
+  }
+
+  const merchant = first.merchant_name ?? "Another receipt";
+  const date = first.receipt_date ?? "the same date";
+  const total =
+    first.total_amount != null ? ` and total ${first.total_amount.toFixed(2)}` : "";
+
+  if (duplicates.length === 1) {
+    return `${merchant} already exists on ${date}${total}.`;
+  }
+
+  return `${merchant} is one of ${duplicates.length} similar receipts on ${date}${total}.`;
+}
+
+type SelectFieldProps = {
+  label: string;
+  onChange: (value: string) => void;
+  options: Array<{ label: string; value: string }>;
+  selectRef?: React.RefObject<HTMLSelectElement | null>;
+  value: string;
+};
+
+function SelectField({ label, onChange, options, selectRef, value }: SelectFieldProps) {
+  return (
+    <label className="block">
+      <span className="mb-2 block text-sm text-[var(--text-secondary)]">{label}</span>
+      <select
+        ref={selectRef}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="w-full rounded-2xl border border-white/12 bg-[rgba(14,20,27,0.96)] px-4 py-3 text-sm outline-none focus:border-[var(--border-strong)]"
+      >
+        {options.map((option) => (
+          <option key={option.value || "empty"} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
     </label>
   );
 }
