@@ -19,6 +19,7 @@ export type ReceiptRow = {
   receipt_date: string | null;
   total_amount: number | null;
   vat_amount: number | null;
+  currency: string | null;
   category: string | null;
   raw_ocr_text: string | null;
   created_at: string;
@@ -35,6 +36,7 @@ export type ReceiptInsert = {
   receipt_date: string | null;
   total_amount: number | null;
   vat_amount: number | null;
+  currency: string | null;
   category: string | null;
   raw_ocr_text: string | null;
 };
@@ -45,3 +47,11 @@ export type ReceiptListItem = ReceiptRow & {
 };
 
 export type ReceiptDetail = ReceiptListItem;
+
+export type ReceiptEditableFields = {
+  merchant_name: string | null;
+  receipt_date: string | null;
+  total_amount: number | null;
+  vat_amount: number | null;
+  category: string | null;
+};

@@ -2,6 +2,7 @@ import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import type {
   FolderRow,
   ReceiptDetail,
+  ReceiptEditableFields,
   ReceiptInsert,
   ReceiptListItem,
   ReceiptRow,
@@ -72,7 +73,6 @@ export async function saveReceipt({
 
   const receiptId = crypto.randomUUID();
   const imagePath = buildReceiptImagePath(userId, receiptId);
-  const stub = buildStubReceipt();
 
   const { error: uploadError } = await supabase.storage
     .from("receipts")
@@ -90,13 +90,14 @@ export async function saveReceipt({
     user_id: userId,
     folder_id: folderId,
     image_path: imagePath,
-    status: "uploaded",
-    merchant_name: stub.merchant_name,
-    receipt_date: stub.receipt_date,
-    total_amount: stub.total_amount,
-    vat_amount: stub.vat_amount,
-    category: stub.category,
-    raw_ocr_text: stub.raw_ocr_text,
+    status: "processing",
+    merchant_name: null,
+    receipt_date: null,
+    total_amount: null,
+    vat_amount: null,
+    currency: null,
+    category: null,
+    raw_ocr_text: null,
   };
 
   const { error: insertError } = await supabase.from("receipts").insert(payload);
@@ -120,7 +121,7 @@ export async function fetchReceiptsWithUrls(
   const { data, error } = await supabase
     .from("receipts")
     .select(
-      "id, user_id, folder_id, image_path, status, merchant_name, receipt_date, total_amount, vat_amount, category, raw_ocr_text, created_at, updated_at, folders(name)",
+      "id, user_id, folder_id, image_path, status, merchant_name, receipt_date, total_amount, vat_amount, currency, category, raw_ocr_text, created_at, updated_at, folders(name)",
     )
     .eq("user_id", userId)
     .order("created_at", { ascending: false })
@@ -155,7 +156,7 @@ export async function fetchReceiptDetail(
   const { data, error } = await supabase
     .from("receipts")
     .select(
-      "id, user_id, folder_id, image_path, status, merchant_name, receipt_date, total_amount, vat_amount, category, raw_ocr_text, created_at, updated_at, folders(name)",
+      "id, user_id, folder_id, image_path, status, merchant_name, receipt_date, total_amount, vat_amount, currency, category, raw_ocr_text, created_at, updated_at, folders(name)",
     )
     .eq("id", receiptId)
     .eq("user_id", userId)
@@ -179,6 +180,141 @@ export async function fetchReceiptDetail(
   };
 }
 
+export async function triggerReceiptProcessing(receiptId: string): Promise<Result<void>> {
+  const supabase = getSupabaseBrowserClient();
+  if (!supabase) {
+    return { ok: false, error: "Supabase environment variables are missing." };
+  }
+
+  const accessToken = await getAccessToken();
+  if (!accessToken) {
+    return { ok: false, error: "You need to sign in before processing receipts." };
+  }
+
+  const response = await fetch(`/api/receipts/${receiptId}/process`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+
+  if (!response.ok) {
+    const json = (await response.json().catch(() => null)) as { error?: string } | null;
+    return {
+      ok: false,
+      error: json?.error ?? "Receipt processing failed.",
+    };
+  }
+
+  return { ok: true, data: undefined };
+}
+
+export async function updateReceiptFields(
+  receiptId: string,
+  fields: ReceiptEditableFields,
+): Promise<Result<void>> {
+  const accessToken = await getAccessToken();
+  if (!accessToken) {
+    return { ok: false, error: "You need to sign in before editing receipts." };
+  }
+
+  const response = await fetch(`/api/receipts/${receiptId}`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify(fields),
+  });
+
+  if (!response.ok) {
+    const json = (await response.json().catch(() => null)) as { error?: string } | null;
+    return {
+      ok: false,
+      error: json?.error ?? "Could not update receipt fields.",
+    };
+  }
+
+  return { ok: true, data: undefined };
+}
+
+export async function deleteReceipt(receiptId: string): Promise<Result<void>> {
+  const accessToken = await getAccessToken();
+  if (!accessToken) {
+    return { ok: false, error: "You need to sign in before deleting receipts." };
+  }
+
+  const response = await fetch(`/api/receipts/${receiptId}`, {
+    method: "DELETE",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+
+  if (!response.ok) {
+    const json = (await response.json().catch(() => null)) as { error?: string } | null;
+    return {
+      ok: false,
+      error: json?.error ?? "Could not delete the receipt.",
+    };
+  }
+
+  return { ok: true, data: undefined };
+}
+
+export async function deleteAllUserReceipts(): Promise<Result<void>> {
+  const accessToken = await getAccessToken();
+  if (!accessToken) {
+    return { ok: false, error: "You need to sign in before deleting test data." };
+  }
+
+  const response = await fetch("/api/dev/receipts", {
+    method: "DELETE",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+
+  if (!response.ok) {
+    const json = (await response.json().catch(() => null)) as { error?: string } | null;
+    return {
+      ok: false,
+      error: json?.error ?? "Could not delete test receipts.",
+    };
+  }
+
+  return { ok: true, data: undefined };
+}
+
+export async function refreshAllAppCaches() {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  if ("caches" in window) {
+    const keys = await window.caches.keys();
+    await Promise.all(keys.map((key) => window.caches.delete(key)));
+  }
+
+  if ("serviceWorker" in navigator) {
+    const registrations = await navigator.serviceWorker.getRegistrations();
+    await Promise.all(registrations.map((registration) => registration.update()));
+  }
+}
+
+async function getAccessToken() {
+  const supabase = getSupabaseBrowserClient();
+  if (!supabase) {
+    return null;
+  }
+
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+
+  return session?.access_token ?? null;
+}
+
 async function createSignedUrlMap(imagePaths: string[]) {
   const supabase = getSupabaseBrowserClient();
   if (!supabase || imagePaths.length === 0) {
@@ -198,20 +334,6 @@ async function createSignedUrlMap(imagePaths: string[]) {
   });
 
   return map;
-}
-
-function buildStubReceipt() {
-  const now = new Date();
-
-  return {
-    merchant_name: "Pending OCR",
-    receipt_date: now.toISOString().slice(0, 10),
-    total_amount: 0,
-    vat_amount: 0,
-    category: "Uncategorized",
-    raw_ocr_text:
-      "OCR not implemented yet. This placeholder row was created immediately after upload.",
-  };
 }
 
 function buildReceiptImagePath(userId: string, receiptId: string) {

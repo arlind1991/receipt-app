@@ -20,6 +20,7 @@ create table if not exists public.receipts (
   receipt_date date,
   total_amount numeric(12,2),
   vat_amount numeric(12,2),
+  currency text,
   category text,
   raw_ocr_text text,
   created_at timestamptz not null default timezone('utc', now()),

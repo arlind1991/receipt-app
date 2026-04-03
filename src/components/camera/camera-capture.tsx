@@ -6,7 +6,12 @@ import { useRouter } from "next/navigation";
 import { AppNav } from "@/components/app-nav";
 import { StatusBanner } from "@/components/status-banner";
 import { getLastUsedFolderId, setLastUsedFolderId } from "@/lib/local-storage";
-import { createFolder, fetchFolders, saveReceipt } from "@/lib/receipt-service";
+import {
+  createFolder,
+  fetchFolders,
+  saveReceipt,
+  triggerReceiptProcessing,
+} from "@/lib/receipt-service";
 import { ensureBrowserSession, supabaseEnvError } from "@/lib/supabase/session";
 import type { FolderRow } from "@/lib/types";
 
@@ -206,6 +211,7 @@ export function CameraCapture() {
         throw new Error(saveResult.error);
       }
 
+      void triggerReceiptProcessing(saveResult.data.id);
       router.push(`/receipts/${saveResult.data.id}`);
     } catch (error) {
       setErrorMessage(

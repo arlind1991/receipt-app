@@ -20,3 +20,11 @@ export function setLastUsedFolderId(folderId: string | null) {
 
   window.localStorage.setItem(LAST_USED_FOLDER_KEY, folderId);
 }
+
+export function clearAppLocalState() {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.localStorage.removeItem(LAST_USED_FOLDER_KEY);
+}

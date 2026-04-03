@@ -32,6 +32,8 @@ cp .env.example .env.local
 ```env
 NEXT_PUBLIC_SUPABASE_URL=...
 NEXT_PUBLIC_SUPABASE_ANON_KEY=...
+SUPABASE_SERVICE_ROLE_KEY=...
+OPENAI_API_KEY=...
 ```
 
 4. In Supabase, enable:
@@ -40,7 +42,10 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=...
 - Your desired email flow in Supabase Auth, such as magic link or email OTP
 - A Storage bucket named `receipts` if you do not run the SQL migration through the CLI
 
-5. Run the SQL in `supabase/migrations/001_initial_schema.sql`
+5. Run the SQL in:
+
+- `supabase/migrations/001_initial_schema.sql`
+- `supabase/migrations/002_add_receipt_currency.sql`
 
 6. Start the app:
 
@@ -68,7 +73,8 @@ The migration creates:
 - `src/app/receipts/page.tsx` searchable receipts list
 - `src/app/receipts/[id]/page.tsx` receipt detail screen
 - `src/lib/receipt-service.ts` Supabase storage and database calls
-- `src/lib/supabase/*` Supabase client and anonymous session bootstrap
+- `src/lib/receipt-ocr.ts` server-side OCR and field extraction
+- `src/lib/supabase/*` Supabase browser/server clients and session helpers
 - `supabase/migrations/001_initial_schema.sql` database and storage setup
 
 ## Notes

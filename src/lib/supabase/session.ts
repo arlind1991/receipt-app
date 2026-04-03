@@ -8,6 +8,7 @@ import {
   getSupabaseBrowserClient,
   supabaseEnvError,
 } from "@/lib/supabase/client";
+import { clearAppLocalState } from "@/lib/local-storage";
 
 export { supabaseEnvError };
 
@@ -186,7 +187,15 @@ export async function signInWithEmail(email: string) {
 
 export async function signOutCurrentUser() {
   const supabase = getSupabaseBrowserClient();
+  clearAppLocalState();
+  pendingSessionRequest = null;
+
   if (!supabase) {
+    updateSessionBootstrapState({
+      error: null,
+      status: "signed_out",
+      user: null,
+    });
     return;
   }
 
