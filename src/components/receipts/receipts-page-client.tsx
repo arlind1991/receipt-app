@@ -11,6 +11,10 @@ import { ensureBrowserSession, supabaseEnvError } from "@/lib/supabase/session";
 import { formatCurrency, formatReceiptDate, normalizeCurrency } from "@/lib/utils";
 import type { ReceiptListItem } from "@/lib/types";
 
+const showReceiptDebug =
+  process.env.NODE_ENV !== "production" ||
+  process.env.NEXT_PUBLIC_ENABLE_RECEIPT_DEBUG === "true";
+
 export function ReceiptsPageClient() {
   const [items, setItems] = useState<ReceiptListItem[]>([]);
   const [query, setQuery] = useState("");
@@ -188,8 +192,13 @@ export function ReceiptsPageClient() {
                       <p className="mt-1 text-sm text-[var(--text-secondary)]">
                         {item.folder_name ?? "Unsorted"}
                       </p>
+                      {showReceiptDebug && item.extraction_error ? (
+                        <p className="mt-2 text-xs text-[var(--danger)]">
+                          {item.extraction_error}
+                        </p>
+                      ) : null}
                     </div>
-                    <StatusPill status={item.status} />
+                    <StatusPill status={resolveDisplayStatus(item)} />
                   </div>
 
                   <div className="mt-6 flex items-end justify-between gap-2">
@@ -246,10 +255,36 @@ function renderMerchantLabel(item: ReceiptListItem) {
   return "Unknown merchant";
 }
 
+function resolveDisplayStatus(item: ReceiptListItem) {
+  if (item.status === "done" && isPartiallyRead(item)) {
+    return "partially read";
+  }
+
+  return item.status;
+}
+
+function isPartiallyRead(item: ReceiptListItem) {
+  if (!item.raw_ocr_text) {
+    return false;
+  }
+
+  const populatedFields = [
+    item.merchant_name,
+    item.receipt_date,
+    item.total_amount,
+    item.vat_amount,
+    item.category,
+  ].filter((value) => value !== null && value !== "").length;
+
+  return populatedFields > 0 && populatedFields < 5;
+}
+
 function StatusPill({ status }: { status: string }) {
   const className =
     status === "done"
       ? "bg-[rgba(143,247,208,0.14)] text-[var(--accent)]"
+      : status === "partially read"
+        ? "bg-[rgba(255,214,102,0.16)] text-[#ffd666]"
       : status === "failed"
         ? "bg-[rgba(255,139,158,0.14)] text-[var(--danger)]"
         : "bg-white/8 text-[var(--text-secondary)]";

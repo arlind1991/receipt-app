@@ -98,6 +98,8 @@ export async function saveReceipt({
     currency: null,
     category: null,
     raw_ocr_text: null,
+    parsed_ocr_json: null,
+    extraction_error: null,
   };
 
   const { error: insertError } = await supabase.from("receipts").insert(payload);
@@ -121,7 +123,7 @@ export async function fetchReceiptsWithUrls(
   const { data, error } = await supabase
     .from("receipts")
     .select(
-      "id, user_id, folder_id, image_path, status, merchant_name, receipt_date, total_amount, vat_amount, currency, category, raw_ocr_text, created_at, updated_at, folders(name)",
+      "id, user_id, folder_id, image_path, status, merchant_name, receipt_date, total_amount, vat_amount, currency, category, raw_ocr_text, parsed_ocr_json, extraction_error, created_at, updated_at, folders(name)",
     )
     .eq("user_id", userId)
     .order("created_at", { ascending: false })
@@ -156,7 +158,7 @@ export async function fetchReceiptDetail(
   const { data, error } = await supabase
     .from("receipts")
     .select(
-      "id, user_id, folder_id, image_path, status, merchant_name, receipt_date, total_amount, vat_amount, currency, category, raw_ocr_text, created_at, updated_at, folders(name)",
+      "id, user_id, folder_id, image_path, status, merchant_name, receipt_date, total_amount, vat_amount, currency, category, raw_ocr_text, parsed_ocr_json, extraction_error, created_at, updated_at, folders(name)",
     )
     .eq("id", receiptId)
     .eq("user_id", userId)

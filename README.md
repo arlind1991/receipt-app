@@ -46,6 +46,7 @@ OPENAI_API_KEY=...
 
 - `supabase/migrations/001_initial_schema.sql`
 - `supabase/migrations/002_add_receipt_currency.sql`
+- `supabase/migrations/003_add_receipt_debug_fields.sql`
 
 6. Start the app:
 
@@ -83,3 +84,4 @@ The migration creates:
 - The app saves immediately after capture without forcing folder selection.
 - Receipt images are stored privately and rendered through signed URLs.
 - The app now uses persisted Supabase email sessions, so returning users stay signed in on the same browser/device.
+- Receipt OCR is best-effort: raw OCR text, partial structured fields, parsed JSON, and extraction errors can be retained for debugging and manual correction.

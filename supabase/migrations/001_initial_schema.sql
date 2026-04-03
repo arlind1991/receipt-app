@@ -23,6 +23,8 @@ create table if not exists public.receipts (
   currency text,
   category text,
   raw_ocr_text text,
+  parsed_ocr_json text,
+  extraction_error text,
   created_at timestamptz not null default timezone('utc', now()),
   updated_at timestamptz not null default timezone('utc', now())
 );

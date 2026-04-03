@@ -15,6 +15,10 @@ import { ensureBrowserSession, supabaseEnvError } from "@/lib/supabase/session";
 import { formatCurrency, formatReceiptDate, normalizeCurrency } from "@/lib/utils";
 import type { ReceiptDetail, ReceiptEditableFields } from "@/lib/types";
 
+const showReceiptDebug =
+  process.env.NODE_ENV !== "production" ||
+  process.env.NEXT_PUBLIC_ENABLE_RECEIPT_DEBUG === "true";
+
 type ReceiptDetailClientProps = {
   receiptId: string;
 };
@@ -203,6 +207,10 @@ export function ReceiptDetailClient({
       return "Extraction failed. You can still review the image and fill in the important fields manually below.";
     }
 
+    if (receipt.status === "done" && isPartiallyRead(receipt)) {
+      return "Partially read. Some fields were recovered, and you can fill in the rest manually.";
+    }
+
     return null;
   }, [receipt]);
 
@@ -258,7 +266,7 @@ export function ReceiptDetailClient({
               <div className="flex items-center justify-between gap-3">
                 <p className="eyebrow">Saved Fields</p>
                 <span className="rounded-full bg-white/8 px-3 py-1 text-[11px] uppercase tracking-[0.14em] text-[var(--text-secondary)]">
-                  {receipt.status}
+                  {resolveDisplayStatus(receipt)}
                 </span>
               </div>
 
@@ -325,6 +333,25 @@ export function ReceiptDetailClient({
                       : "No OCR text captured.")}
                 </p>
               </div>
+
+              {showReceiptDebug ? (
+                <div className="mt-4 rounded-[24px] border border-white/10 bg-white/5 p-4">
+                  <p className="text-xs uppercase tracking-[0.18em] text-[var(--text-muted)]">
+                    Debug
+                  </p>
+                  <div className="mt-3 space-y-3 text-sm text-[var(--text-secondary)]">
+                    <p>Extraction error: {receipt.extraction_error ?? "None"}</p>
+                    <div>
+                      <p className="mb-2 text-xs uppercase tracking-[0.16em] text-[var(--text-muted)]">
+                        Parsed JSON
+                      </p>
+                      <pre className="overflow-x-auto whitespace-pre-wrap rounded-2xl border border-white/10 bg-black/20 p-3 text-xs leading-6 text-white/80">
+                        {receipt.parsed_ocr_json ?? "No parsed JSON saved."}
+                      </pre>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
             </section>
 
             <section className="glass-panel rounded-[28px] p-5">
@@ -403,6 +430,30 @@ export function ReceiptDetailClient({
       </section>
     </main>
   );
+}
+
+function resolveDisplayStatus(receipt: ReceiptDetail) {
+  if (receipt.status === "done" && isPartiallyRead(receipt)) {
+    return "partially read";
+  }
+
+  return receipt.status;
+}
+
+function isPartiallyRead(receipt: ReceiptDetail) {
+  if (!receipt.raw_ocr_text) {
+    return false;
+  }
+
+  const populatedFields = [
+    receipt.merchant_name,
+    receipt.receipt_date,
+    receipt.total_amount,
+    receipt.vat_amount,
+    receipt.category,
+  ].filter((value) => value !== null && value !== "").length;
+
+  return populatedFields > 0 && populatedFields < 5;
 }
 
 type FieldCardProps = {

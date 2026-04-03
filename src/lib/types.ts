@@ -22,6 +22,8 @@ export type ReceiptRow = {
   currency: string | null;
   category: string | null;
   raw_ocr_text: string | null;
+  parsed_ocr_json: string | null;
+  extraction_error: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -39,6 +41,8 @@ export type ReceiptInsert = {
   currency: string | null;
   category: string | null;
   raw_ocr_text: string | null;
+  parsed_ocr_json: string | null;
+  extraction_error: string | null;
 };
 
 export type ReceiptListItem = ReceiptRow & {
