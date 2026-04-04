@@ -6,7 +6,6 @@ import { useRouter } from "next/navigation";
 import { StatusBanner } from "@/components/status-banner";
 import { getLastUsedFolderId, setLastUsedFolderId } from "@/lib/local-storage";
 import {
-  analyzeCapturedReceipt,
   fetchFolders,
   fetchReceiptDetail,
   saveReceipt,
@@ -17,16 +16,14 @@ import { ensureBrowserSession, supabaseEnvError } from "@/lib/supabase/session";
 import type {
   FolderRow,
   ReceiptDetail,
-  ReceiptDetectionResult,
   ReceiptEditableFields,
 } from "@/lib/types";
 
 const UNSORTED_FOLDER_ID = "__unsorted__";
-const LIVE_DETECTION_INTERVAL_MS = 1800;
 const PROCESSING_POLL_MS = 700;
 const FIELD_REVEAL_MS = 180;
 const POST_REVEAL_PAUSE_MS = 650;
-const DEFAULT_CAMERA_ZOOM = 1.3;
+const DEFAULT_CAMERA_ZOOM = 1.08;
 
 type CaptureMode = "single" | "multiple" | "two-sided";
 type CaptureStage = "camera" | "processing" | "review" | "batch-complete";
@@ -68,7 +65,6 @@ export function CameraCapture() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const liveDetectionBusyRef = useRef(false);
   const multipleFramesRef = useRef<CapturedFrame[]>([]);
   const twoSidedFramesRef = useRef<{ back: CapturedFrame | null; front: CapturedFrame | null }>({
     back: null,
@@ -81,7 +77,6 @@ export function CameraCapture() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [mode, setMode] = useState<CaptureMode>("single");
   const [stage, setStage] = useState<CaptureStage>("camera");
-  const [liveDetection, setLiveDetection] = useState<ReceiptDetectionResult | null>(null);
   const [processingFields, setProcessingFields] = useState<ProcessingFields>(emptyProcessingFields);
   const [processingLabel, setProcessingLabel] = useState("Preparing scan");
   const [processingSubLabel, setProcessingSubLabel] = useState<string | null>(null);
@@ -96,20 +91,12 @@ export function CameraCapture() {
   }>({ back: null, front: null });
   const [editValues, setEditValues] = useState(emptyEditValues);
   const [useCssZoomFallback, setUseCssZoomFallback] = useState(false);
-  const [cameraGuidance, setCameraGuidance] = useState("Fill the frame");
 
   const hasSupabase = useMemo(() => !supabaseEnvError, []);
   const goToReceipts = useCallback(() => {
     router.replace("/receipts");
     router.refresh();
   }, [router]);
-  const focusedDetectionBox = useMemo(() => {
-    const [first] = liveDetection?.boxes ?? [];
-    if (!first || first.width >= 0.98 || first.height >= 0.98) {
-      return null;
-    }
-    return first;
-  }, [liveDetection]);
   const videoScale = useCssZoomFallback ? DEFAULT_CAMERA_ZOOM : 1;
 
   useEffect(() => {
@@ -253,7 +240,6 @@ export function CameraCapture() {
     setProcessingSubLabel(null);
     setEditValues(emptyEditValues);
     setBatchCompletedCount(0);
-    setLiveDetection(null);
     setErrorMessage(null);
     setStage("camera");
     if (nextMode) {
@@ -286,67 +272,6 @@ export function CameraCapture() {
     return new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", quality));
   }, []);
 
-  const detectLiveReceipt = useCallback(async () => {
-    if (liveDetectionBusyRef.current || stage !== "camera") {
-      return;
-    }
-
-    liveDetectionBusyRef.current = true;
-
-    try {
-      const blob = await captureFrameBlob(0.62, 960);
-      if (!blob) {
-        return;
-      }
-
-      const detectionResult = await analyzeCapturedReceipt(blob);
-      if (detectionResult.ok) {
-        setLiveDetection(detectionResult.data);
-      }
-    } finally {
-      liveDetectionBusyRef.current = false;
-    }
-  }, [captureFrameBlob, stage]);
-
-  useEffect(() => {
-    if (stage !== "camera" || !isCameraReady) {
-      return;
-    }
-
-    void detectLiveReceipt();
-    const intervalId = window.setInterval(() => {
-      void detectLiveReceipt();
-    }, LIVE_DETECTION_INTERVAL_MS);
-
-    return () => {
-      window.clearInterval(intervalId);
-    };
-  }, [detectLiveReceipt, isCameraReady, stage]);
-
-  useEffect(() => {
-    if (stage !== "camera" || mode !== "single") {
-      setCameraGuidance(mode === "two-sided" ? "Move closer for readable text" : "Capture when ready");
-      return;
-    }
-
-    if (!focusedDetectionBox) {
-      setCameraGuidance("Fill the frame");
-      return;
-    }
-
-    if (focusedDetectionBox.width < 0.52 || focusedDetectionBox.height < 0.52) {
-      setCameraGuidance("Move closer");
-      return;
-    }
-
-    if (focusedDetectionBox.width > 0.9 || focusedDetectionBox.height > 0.9) {
-      setCameraGuidance("Hold steady");
-      return;
-    }
-
-    setCameraGuidance("Fill the frame");
-  }, [focusedDetectionBox, mode, stage]);
-
   function applyReceipt(nextReceipt: ReceiptDetail, previewUrl: string | null) {
     setReceipt(nextReceipt);
     setReviewPreviewUrl(previewUrl);
@@ -370,7 +295,6 @@ export function CameraCapture() {
     const previewUrl = URL.createObjectURL(blob);
     const frame = { blob, previewUrl };
     setErrorMessage(null);
-    setLiveDetection(null);
 
     if (mode === "single") {
       await processSingleFlow(frame);
@@ -635,21 +559,22 @@ export function CameraCapture() {
 
         <div className="pointer-events-none absolute inset-0 z-10 bg-[linear-gradient(180deg,var(--camera-top-fade),transparent_22%,transparent_68%,var(--camera-bottom-fade))]" />
 
-        <div className="absolute top-[calc(env(safe-area-inset-top,0px)+16px)] left-4 z-30">
+        <div className="absolute inset-x-0 top-[calc(env(safe-area-inset-top,0px)+14px)] z-30 px-4">
           <button
             type="button"
             aria-label="Back to receipts"
             onClick={goToReceipts}
-            className="flex min-h-11 items-center gap-2 rounded-full border border-white/16 bg-black/34 px-4 py-2 text-sm font-medium text-white shadow-[0_12px_30px_rgba(0,0,0,0.28)] backdrop-blur-md transition hover:bg-black/46"
+            className="inline-flex min-h-10 items-center text-[1rem] font-medium tracking-[-0.01em] text-white/92 transition hover:text-white"
           >
-            <span aria-hidden="true" className="text-base leading-none">
+            <span aria-hidden="true" className="inline-block w-0 overflow-hidden text-transparent">
               ←
             </span>
-            Back to Receipts
+            <span aria-hidden="true" className="mr-1 text-[1.3rem] leading-none">&lsaquo;</span>
+            Receipts
           </button>
         </div>
 
-        <div className="absolute top-[calc(env(safe-area-inset-top,0px)+14px)] left-1/2 z-20 w-[min(92vw,23rem)] -translate-x-1/2">
+        <div className="absolute inset-x-0 top-[calc(env(safe-area-inset-top,0px)+52px)] z-20 flex justify-center px-6">
           <ModeSelector
             activeMode={mode}
             onChangeMode={(nextMode) => {
@@ -660,24 +585,6 @@ export function CameraCapture() {
             }}
           />
         </div>
-
-        {stage === "camera" && mode === "single" && focusedDetectionBox ? (
-          <ReceiptGuide box={focusedDetectionBox} />
-        ) : null}
-
-        {stage === "camera" && mode === "single" && focusedDetectionBox ? (
-          <div className="absolute top-[calc(env(safe-area-inset-top,0px)+74px)] left-1/2 z-20 -translate-x-1/2 rounded-full border border-[#5ff0a7]/30 bg-[rgba(6,18,14,0.62)] px-4 py-2 text-xs font-medium tracking-[0.08em] text-[#8ff7d0] backdrop-blur-md">
-            Receipt detected
-          </div>
-        ) : null}
-
-        {stage === "camera" ? (
-          <div className="absolute inset-x-0 bottom-[calc(env(safe-area-inset-bottom,0px)+138px)] z-20 flex justify-center px-6">
-            <div className="rounded-full border border-white/12 bg-black/26 px-4 py-2 text-sm font-medium text-white/84 backdrop-blur-md">
-              {cameraGuidance}
-            </div>
-          </div>
-        ) : null}
 
         {stage === "processing" ? (
           <ProcessingOverlay
@@ -756,27 +663,31 @@ function ModeSelector({
   const modes: Array<{ label: string; value: CaptureMode }> = [
     { label: "Single", value: "single" },
     { label: "Multiple", value: "multiple" },
-    { label: "2-sided", value: "two-sided" },
+    { label: "2-Sided", value: "two-sided" },
   ];
 
   return (
-    <div className="rounded-full border border-white/14 bg-black/28 p-1.5 shadow-[0_10px_28px_rgba(0,0,0,0.2)] backdrop-blur-md">
-      <div className="grid grid-cols-3 gap-1">
+    <div className="flex items-center justify-center gap-6">
         {modes.map((mode) => (
           <button
             key={mode.value}
             type="button"
             onClick={() => onChangeMode(mode.value)}
-            className={`rounded-full px-3 py-2 text-sm font-medium transition ${
+            className={`relative pb-1 text-sm tracking-[0.02em] transition ${
               activeMode === mode.value
-                ? "bg-white text-black"
-                : "text-white/74 hover:bg-white/10"
+                ? "font-semibold text-white"
+                : "font-medium text-white/48 hover:text-white/72"
             }`}
           >
             {mode.label}
+            <span
+              aria-hidden="true"
+              className={`absolute inset-x-0 -bottom-[1px] mx-auto h-px w-5 bg-white transition ${
+                activeMode === mode.value ? "opacity-80" : "opacity-0"
+              }`}
+            />
           </button>
         ))}
-      </div>
     </div>
   );
 }
@@ -862,24 +773,6 @@ function CameraControls({
         </div>
       </div>
     </>
-  );
-}
-
-function ReceiptGuide({
-  box,
-}: {
-  box: { height: number; width: number; x: number; y: number };
-}) {
-  return (
-    <div
-      className="pointer-events-none absolute z-20 rounded-[28px] border-2 border-[#5ff0a7] bg-[rgba(95,240,167,0.08)] shadow-[0_0_0_1px_rgba(95,240,167,0.28),0_0_28px_rgba(95,240,167,0.18)]"
-      style={{
-        height: `${box.height * 100}%`,
-        left: `${box.x * 100}%`,
-        top: `${box.y * 100}%`,
-        width: `${box.width * 100}%`,
-      }}
-    />
   );
 }
 
