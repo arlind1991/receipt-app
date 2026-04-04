@@ -23,9 +23,9 @@ import type {
 
 const UNSORTED_FOLDER_ID = "__unsorted__";
 const LIVE_DETECTION_INTERVAL_MS = 1800;
-const PROCESSING_POLL_MS = 1150;
-const FIELD_REVEAL_MS = 320;
-const POST_REVEAL_PAUSE_MS = 1300;
+const PROCESSING_POLL_MS = 700;
+const FIELD_REVEAL_MS = 180;
+const POST_REVEAL_PAUSE_MS = 650;
 const DEFAULT_CAMERA_ZOOM = 1.3;
 
 type CaptureMode = "single" | "multiple" | "two-sided";
@@ -99,6 +99,10 @@ export function CameraCapture() {
   const [cameraGuidance, setCameraGuidance] = useState("Fill the frame");
 
   const hasSupabase = useMemo(() => !supabaseEnvError, []);
+  const goToReceipts = useCallback(() => {
+    router.replace("/receipts");
+    router.refresh();
+  }, [router]);
   const focusedDetectionBox = useMemo(() => {
     const [first] = liveDetection?.boxes ?? [];
     if (!first || first.width >= 0.98 || first.height >= 0.98) {
@@ -631,16 +635,17 @@ export function CameraCapture() {
 
         <div className="pointer-events-none absolute inset-0 z-10 bg-[linear-gradient(180deg,var(--camera-top-fade),transparent_22%,transparent_68%,var(--camera-bottom-fade))]" />
 
-        <div className="absolute top-[calc(env(safe-area-inset-top,0px)+16px)] left-4 z-20">
+        <div className="absolute top-[calc(env(safe-area-inset-top,0px)+16px)] left-4 z-30">
           <button
             type="button"
-            onClick={() => router.push("/receipts")}
-            className="flex items-center gap-2 rounded-full border border-white/14 bg-black/28 px-4 py-2 text-sm font-medium text-white shadow-[0_10px_28px_rgba(0,0,0,0.24)] backdrop-blur-md transition hover:bg-black/40"
+            aria-label="Back to receipts"
+            onClick={goToReceipts}
+            className="flex min-h-11 items-center gap-2 rounded-full border border-white/16 bg-black/34 px-4 py-2 text-sm font-medium text-white shadow-[0_12px_30px_rgba(0,0,0,0.28)] backdrop-blur-md transition hover:bg-black/46"
           >
             <span aria-hidden="true" className="text-base leading-none">
               ←
             </span>
-            Receipts
+            Back to Receipts
           </button>
         </div>
 

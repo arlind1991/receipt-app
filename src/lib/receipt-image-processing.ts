@@ -1,5 +1,7 @@
 import sharp from "sharp";
 
+const MAX_OCR_DIMENSION = 2048;
+
 export type ReceiptPreprocessingResult = {
   contentType: string;
   debug: {
@@ -22,11 +24,17 @@ export async function preprocessReceiptImageForOcr(params: {
   let pipeline = sharp(params.imageBuffer, { failOn: "none" }).rotate();
 
   pipeline = pipeline
+    .resize({
+      fit: "inside",
+      height: MAX_OCR_DIMENSION,
+      width: MAX_OCR_DIMENSION,
+      withoutEnlargement: true,
+    })
     .grayscale()
     .normalise()
-    .linear(1.12, -10)
-    .sharpen(1, 1.2, 1.8)
-    .jpeg({ chromaSubsampling: "4:4:4", mozjpeg: true, quality: 92 });
+    .linear(1.08, -8)
+    .sharpen(0.8, 1, 1.4)
+    .jpeg({ chromaSubsampling: "4:4:4", mozjpeg: true, quality: 86 });
 
   const ocrBuffer = await pipeline.toBuffer();
 

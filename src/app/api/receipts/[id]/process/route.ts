@@ -57,10 +57,10 @@ export async function POST(request: NextRequest, context: RouteContext) {
     return NextResponse.json({ ok: true, status: "done" });
   }
 
-  const { handwritingModel, ocrModel, structuredModel } = getReceiptOcrModels();
+  const { ocrModel, structuredModel } = getReceiptOcrModels();
   console.info("[receipt-processing:start]", {
     image_path: receipt.image_path,
-    models: { handwritingModel, ocrModel, structuredModel },
+    models: { ocrModel, structuredModel },
     receipt_id: receipt.id,
   });
 
@@ -95,12 +95,6 @@ export async function POST(request: NextRequest, context: RouteContext) {
     contentType: originalContentType,
     imageBuffer: originalImageBuffer,
   });
-
-  if (preprocessing.debug.detected_receipt_count > 1) {
-    const reason = "Multiple receipts detected in one image. Scan each receipt separately.";
-    await markReceiptFailed(supabase, receipt.id, reason);
-    return NextResponse.json({ error: reason }, { status: 409 });
-  }
 
   const extractionResult = await extractReceiptDataFromImage({
     contentType: preprocessing.contentType,
@@ -154,7 +148,6 @@ export async function POST(request: NextRequest, context: RouteContext) {
       extracted_fields: extractionResult.data.debug.extracted_fields,
       notes: extractionResult.data.notes,
       heuristic_debug: extractionResult.data.debug.heuristic_debug,
-      handwriting_stage: extractionResult.data.debug.handwriting_stage,
       ocr_stage: extractionResult.data.debug.ocr_stage,
       preprocessing: extractionResult.data.debug.preprocessing,
       structured_stage: extractionResult.data.debug.structured_stage,

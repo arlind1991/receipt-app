@@ -38,8 +38,6 @@ type ReceiptProcessingOutput = ParsedReceiptPayload & {
   debug: {
     extracted_fields: string[];
     failure_stage: "none" | "ocr" | "structured" | "final";
-    handwriting_detected: boolean;
-    handwriting_stage: OpenAiStageDebug;
     heuristic_debug: HeuristicDebug;
     image_download_succeeded: boolean;
     ocr_text_returned: boolean;
@@ -67,14 +65,13 @@ type ReceiptProcessingOutput = ParsedReceiptPayload & {
 const openAiApiKey = process.env.OPENAI_API_KEY;
 const OCR_MODEL = "gpt-4o-mini";
 const STRUCTURED_MODEL = "gpt-4o-mini";
-const HANDWRITING_MODEL = "gpt-4o-mini";
 
 export const receiptOcrEnvError = !openAiApiKey
   ? "Set OPENAI_API_KEY to enable receipt OCR processing."
   : null;
 
 export function getReceiptOcrModels() {
-  return { handwritingModel: HANDWRITING_MODEL, ocrModel: OCR_MODEL, structuredModel: STRUCTURED_MODEL };
+  return { ocrModel: OCR_MODEL, structuredModel: STRUCTURED_MODEL };
 }
 
 export async function extractReceiptDataFromImage(params: {
@@ -88,8 +85,6 @@ export async function extractReceiptDataFromImage(params: {
   const debug: ReceiptProcessingOutput["debug"] = {
     extracted_fields: [],
     failure_stage: "none",
-    handwriting_detected: false,
-    handwriting_stage: emptyStageDebug(HANDWRITING_MODEL, true),
     heuristic_debug: emptyHeuristicDebug(),
     image_download_succeeded: params.imageDownloadSucceeded ?? true,
     ocr_text_returned: false,
@@ -130,13 +125,8 @@ export async function extractReceiptDataFromImage(params: {
 
   const heuristic = applyReceiptHeuristics(rawText, structuredFields);
   debug.heuristic_debug = heuristic.debug;
-  const originalBuffer = params.originalImageBuffer ?? params.imageBuffer;
-  const originalType = params.originalContentType ?? params.contentType;
-  const handwriting = await extractHandwrittenNotesFromImage({ contentType: originalType, imageBuffer: originalBuffer, printedText: rawText });
-  debug.handwriting_stage = handwriting.debug;
-  debug.handwriting_detected = Boolean(handwriting.ok && handwriting.data);
   const confidence = scoreFieldConfidence(rawText, heuristic.debug, structuredFields, heuristic.fields);
-  debug.extracted_fields = listExtractedFields(rawText, heuristic.fields, handwriting.ok ? handwriting.data : null);
+  debug.extracted_fields = listExtractedFields(rawText, heuristic.fields, null);
 
   const shouldFail = rawText.length === 0 && debug.extracted_fields.length === 0;
   const failureReason = shouldFail ? (printed.ok ? "No usable OCR text or extracted fields were recovered." : printed.error) : structuredError;
@@ -146,7 +136,7 @@ export async function extractReceiptDataFromImage(params: {
     ok: true as const,
     data: {
       ...heuristic.fields,
-      notes: handwriting.ok ? handwriting.data : null,
+      notes: null,
       field_confidence: {
         merchant: confidence.merchant,
         receipt_date: confidence.receipt_date,
@@ -174,24 +164,17 @@ async function extractPrintedReceiptTextFromImage(params: { contentType: string;
   return requestImageText({ contentType: params.contentType, imageBuffer: params.imageBuffer, model: OCR_MODEL, prompt });
 }
 
-async function extractHandwrittenNotesFromImage(params: { contentType: string; imageBuffer: Buffer; printedText: string }) {
-  const prompt = "Extract only handwritten notes, pen marks, or handwritten annotations from this receipt image. Ignore printed text. Return empty text if there is no handwriting.";
-  const attempt = await requestImageText({ contentType: params.contentType, imageBuffer: params.imageBuffer, model: HANDWRITING_MODEL, prompt });
-  const normalized = normalizeHandwrittenNotes(attempt.debug.assistant_text, params.printedText);
-  return { ok: true as const, data: normalized, debug: { ...attempt.debug, assistant_text: normalized ?? "" } };
-}
-
 async function requestImageText(params: { contentType: string; imageBuffer: Buffer; model: string; prompt: string }) {
   const imageDataUrl = `data:${params.contentType};base64,${params.imageBuffer.toString("base64")}`;
   const payload = {
     model: params.model,
     input: [
       { role: "system", content: [{ type: "input_text", text: params.prompt }] },
-      { role: "user", content: [{ type: "input_text", text: params.prompt }, { type: "input_image", image_url: imageDataUrl, detail: "high" }] },
+      { role: "user", content: [{ type: "input_text", text: params.prompt }, { type: "input_image", image_url: imageDataUrl, detail: "auto" }] },
     ],
-    max_output_tokens: 2400,
+    max_output_tokens: 1600,
   };
-  const requestShape = JSON.stringify({ model: payload.model, input: [{ role: "system" }, { role: "user", content: [{ type: "input_text" }, { type: "input_image", image_url: "[data-url]", detail: "high" }] }], max_output_tokens: payload.max_output_tokens });
+  const requestShape = JSON.stringify({ model: payload.model, input: [{ role: "system" }, { role: "user", content: [{ type: "input_text" }, { type: "input_image", image_url: "[data-url]", detail: "auto" }] }], max_output_tokens: payload.max_output_tokens });
   const attempt = await sendOpenAiRequest(payload, { imageInputSent: true, model: params.model, requestShape });
   if (!attempt.ok || !attempt.debug.assistant_text.trim()) {
     return { ok: false as const, error: attempt.debug.empty_reason ?? "OpenAI image transcription returned an empty response.", debug: attempt.debug };
@@ -207,7 +190,7 @@ async function extractStructuredFieldsFromOcrText(rawText: string) {
       { role: "user", content: [{ type: "input_text", text: `Parse this printed receipt OCR text into structured data:\n\n${rawText}` }] },
     ],
     text: { format: { type: "json_schema", name: "receipt_text_parse", schema: { type: "object", additionalProperties: false, properties: { merchant_name: { type: ["string", "null"] }, receipt_date: { type: ["string", "null"] }, total_amount: { type: ["number", "null"] }, vat_amount: { type: ["number", "null"] }, currency: { type: ["string", "null"] }, category: { type: ["string", "null"] } }, required: ["merchant_name", "receipt_date", "total_amount", "vat_amount", "currency", "category"] } } },
-    max_output_tokens: 800,
+    max_output_tokens: 500,
   };
   const requestShape = JSON.stringify({ model: payload.model, input: [{ role: "system" }, { role: "user", content: [{ type: "input_text", text: "[printed-ocr-text]" }] }], text: { format: { type: "json_schema", name: "receipt_text_parse" } }, max_output_tokens: payload.max_output_tokens });
   const attempt = await sendOpenAiRequest(payload, { imageInputSent: false, model: STRUCTURED_MODEL, requestShape });
@@ -277,11 +260,6 @@ function scoreFieldConfidence(
 
 function sanitizeStructuredFields(result: StructuredReceiptFields) {
   return { merchant_name: normalizeNullableString(result.merchant_name), receipt_date: normalizeDate(result.receipt_date), total_amount: normalizeNullableNumber(result.total_amount), vat_amount: normalizeNullableNumber(result.vat_amount), currency: normalizeCurrency(result.currency), category: normalizeNullableString(result.category) };
-}
-function normalizeHandwrittenNotes(value: string, printedText: string) {
-  const printedLines = new Set(printedText.split(/\r?\n/).map((line) => line.trim().toLowerCase()).filter(Boolean));
-  const noteLines = normalizeRawText(value).split(/\r?\n/).map((line) => line.trim()).filter(Boolean).filter((line) => !printedLines.has(line.toLowerCase()) && !/^none$/i.test(line) && !/^no handwriting$/i.test(line));
-  return noteLines.length ? noteLines.join("\n") : null;
 }
 function extractBestAmountFromLine(line: string) {
   const matches = [...line.matchAll(/(?:£|\$|€)?\s?(\d{1,4}(?:[.,]\d{3})*(?:[.,]\d{2}))/g)];
