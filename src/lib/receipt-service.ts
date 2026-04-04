@@ -148,6 +148,24 @@ export async function fetchReceiptsWithUrls(
   };
 }
 
+export async function fetchReceiptCount(userId: string): Promise<Result<number>> {
+  const supabase = getSupabaseBrowserClient();
+  if (!supabase) {
+    return { ok: false, error: "Supabase environment variables are missing." };
+  }
+
+  const { count, error } = await supabase
+    .from("receipts")
+    .select("id", { count: "exact", head: true })
+    .eq("user_id", userId);
+
+  if (error) {
+    return { ok: false, error: error.message };
+  }
+
+  return { ok: true, data: count ?? 0 };
+}
+
 export async function fetchReceiptDetail(
   receiptId: string,
   userId: string,

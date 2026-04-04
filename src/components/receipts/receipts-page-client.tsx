@@ -6,6 +6,7 @@ import { useEffect, useEffectEvent, useMemo, useState } from "react";
 import { AppNav } from "@/components/app-nav";
 import { EmptyState } from "@/components/empty-state";
 import { StatusBanner } from "@/components/status-banner";
+import { getReceiptViewMode, setReceiptViewMode, type ReceiptViewMode } from "@/lib/local-storage";
 import { fetchReceiptsWithUrls } from "@/lib/receipt-service";
 import { ensureBrowserSession, supabaseEnvError } from "@/lib/supabase/session";
 import { formatCurrency, formatReceiptDate, normalizeCurrency } from "@/lib/utils";
@@ -17,6 +18,12 @@ const showReceiptDebug =
 
 type SortOption = "newest" | "highest";
 
+type ReceiptSection = {
+  items: ReceiptListItem[];
+  key: string;
+  title: string;
+};
+
 export function ReceiptsPageClient() {
   const [items, setItems] = useState<ReceiptListItem[]>([]);
   const [query, setQuery] = useState("");
@@ -25,6 +32,7 @@ export function ReceiptsPageClient() {
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [sortBy, setSortBy] = useState<SortOption>("newest");
+  const [viewMode, setViewMode] = useState<ReceiptViewMode>(() => getReceiptViewMode());
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -76,6 +84,11 @@ export function ReceiptsPageClient() {
 
     setItems(result.data);
     setLoading(false);
+  }
+
+  function handleViewModeChange(nextMode: ReceiptViewMode) {
+    setReceiptViewMode(nextMode);
+    setViewMode(nextMode);
   }
 
   useEffect(() => {
@@ -131,7 +144,7 @@ export function ReceiptsPageClient() {
         return false;
       }
 
-      const effectiveDate = item.receipt_date ?? item.created_at.slice(0, 10);
+      const effectiveDate = getEffectiveDateValue(item);
 
       if (dateFrom && effectiveDate < dateFrom) {
         return false;
@@ -149,14 +162,15 @@ export function ReceiptsPageClient() {
         return (right.total_amount ?? -1) - (left.total_amount ?? -1);
       }
 
-      return new Date(right.created_at).getTime() - new Date(left.created_at).getTime();
+      return getReceiptTimestamp(right) - getReceiptTimestamp(left);
     });
   }, [categoryFilter, dateFrom, dateTo, items, merchantFilter, query, sortBy]);
 
   const insights = useMemo(() => buildInsights(items), [items]);
+  const sections = useMemo(() => buildReceiptSections(filteredItems), [filteredItems]);
 
   return (
-    <main className="app-shell pb-28">
+    <main className="app-shell app-shell-with-nav">
       <section className="mx-auto w-full max-w-md">
         <div className="mb-5 flex items-end justify-between gap-4">
           <div>
@@ -167,13 +181,13 @@ export function ReceiptsPageClient() {
             <button
               type="button"
               onClick={() => void handleRefresh()}
-              className="soft-card rounded-full px-4 py-2 text-sm text-[var(--text-secondary)] transition hover:text-white"
+              className="secondary-button rounded-full px-4 py-2 text-sm transition"
             >
               Refresh
             </button>
             <Link
               href="/camera"
-              className="soft-card rounded-full px-4 py-2 text-sm text-[var(--text-secondary)] transition hover:text-white"
+              className="secondary-button rounded-full px-4 py-2 text-sm transition"
             >
               Capture
             </Link>
@@ -181,7 +195,34 @@ export function ReceiptsPageClient() {
         </div>
 
         <section className="glass-panel rounded-[28px] p-4">
-          <p className="eyebrow">Insights</p>
+          <div className="flex items-center justify-between gap-3">
+            <p className="eyebrow">Insights</p>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => handleViewModeChange("gallery")}
+                className={`rounded-full px-3 py-2 text-sm font-medium transition ${
+                  viewMode === "gallery"
+                    ? "bg-[var(--accent)] text-[var(--text-on-accent)]"
+                    : "secondary-button"
+                }`}
+              >
+                Gallery
+              </button>
+              <button
+                type="button"
+                onClick={() => handleViewModeChange("list")}
+                className={`rounded-full px-3 py-2 text-sm font-medium transition ${
+                  viewMode === "list"
+                    ? "bg-[var(--accent)] text-[var(--text-on-accent)]"
+                    : "secondary-button"
+                }`}
+              >
+                List
+              </button>
+            </div>
+          </div>
+
           <div className="mt-4 grid grid-cols-2 gap-3">
             <InsightCard
               label="This month"
@@ -230,7 +271,7 @@ export function ReceiptsPageClient() {
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder="Merchant, folder, date, or status"
-              className="w-full rounded-2xl border border-white/10 bg-white/4 px-4 py-3 text-sm outline-none placeholder:text-[var(--text-muted)]"
+              className="field-control w-full rounded-2xl px-4 py-3 text-sm outline-none"
             />
           </label>
 
@@ -247,18 +288,8 @@ export function ReceiptsPageClient() {
               options={categoryOptions}
               value={categoryFilter}
             />
-            <InputField
-              label="From"
-              onChange={setDateFrom}
-              type="date"
-              value={dateFrom}
-            />
-            <InputField
-              label="To"
-              onChange={setDateTo}
-              type="date"
-              value={dateTo}
-            />
+            <InputField label="From" onChange={setDateFrom} type="date" value={dateFrom} />
+            <InputField label="To" onChange={setDateTo} type="date" value={dateTo} />
           </div>
 
           <div className="mt-4 flex items-center gap-3">
@@ -267,8 +298,8 @@ export function ReceiptsPageClient() {
               onClick={() => setSortBy("newest")}
               className={`rounded-full px-4 py-2 text-sm transition ${
                 sortBy === "newest"
-                  ? "bg-[var(--accent)] text-[#082319]"
-                  : "soft-card text-[var(--text-secondary)] hover:text-white"
+                  ? "bg-[var(--accent)] text-[var(--text-on-accent)]"
+                  : "secondary-button"
               }`}
             >
               Newest first
@@ -278,8 +309,8 @@ export function ReceiptsPageClient() {
               onClick={() => setSortBy("highest")}
               className={`rounded-full px-4 py-2 text-sm transition ${
                 sortBy === "highest"
-                  ? "bg-[var(--accent)] text-[#082319]"
-                  : "soft-card text-[var(--text-secondary)] hover:text-white"
+                  ? "bg-[var(--accent)] text-[var(--text-on-accent)]"
+                  : "secondary-button"
               }`}
             >
               Highest amount
@@ -293,91 +324,174 @@ export function ReceiptsPageClient() {
           </div>
         ) : null}
 
-        <section className="thin-scrollbar mt-5 flex flex-col gap-4">
+        <section className="thin-scrollbar mt-5 flex flex-col gap-6">
           {loading ? (
             <div className="soft-card rounded-[28px] p-6 text-sm text-[var(--text-secondary)]">
               Loading saved receipts...
             </div>
           ) : null}
 
-          {!loading && filteredItems.length === 0 ? (
+          {!loading && sections.length === 0 ? (
             <EmptyState
               title="No receipts match these filters"
               description="Try a different date range, merchant, category, or search term."
             />
           ) : null}
 
-          {filteredItems.map((item) => (
-            <Link
-              key={item.id}
-              href={`/receipts/${item.id}`}
-              className="glass-panel overflow-hidden rounded-[28px] transition hover:-translate-y-0.5"
-            >
-              <div className="grid grid-cols-[112px_1fr] gap-4 p-3">
-                <div className="overflow-hidden rounded-[22px] bg-white/6">
-                  {item.signed_image_url ? (
-                    <img
-                      src={item.signed_image_url}
-                      alt={item.merchant_name ?? "Receipt image"}
-                      className="h-full min-h-[112px] w-full object-cover"
-                    />
-                  ) : (
-                    <div className="flex h-full min-h-[112px] items-center justify-center text-xs text-[var(--text-muted)]">
-                      No image
-                    </div>
-                  )}
-                </div>
-                <div className="min-w-0 py-2">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <p className="text-base font-semibold">{renderMerchantLabel(item)}</p>
-                      <p className="mt-1 text-sm text-[var(--text-secondary)]">
-                        {item.category ?? item.folder_name ?? "Unsorted"}
-                      </p>
-                      {showReceiptDebug && item.extraction_error ? (
-                        <p className="mt-2 text-xs text-[var(--danger)]">
-                          {item.extraction_error}
-                        </p>
-                      ) : null}
-                    </div>
-                    <StatusPill status={resolveDisplayStatus(item)} />
-                  </div>
-
-                  <div className="mt-6 flex items-end justify-between gap-2">
-                    <div>
-                      <p className="text-xs uppercase tracking-[0.16em] text-[var(--text-muted)]">
-                        Date
-                      </p>
-                      <p className="mt-1 text-sm text-white">
-                        {item.receipt_date
-                          ? formatReceiptDate(item.receipt_date, item.created_at)
-                          : item.status === "processing"
-                            ? "Extracting..."
-                            : "Unknown"}
-                      </p>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-xs uppercase tracking-[0.16em] text-[var(--text-muted)]">
-                        Amount
-                      </p>
-                      <p className="mt-1 text-lg font-semibold text-[var(--accent)]">
-                        {item.total_amount != null
-                          ? formatCurrency(item.total_amount, normalizeCurrency(item.currency))
-                          : item.status === "processing"
-                            ? "..."
-                            : "Unknown"}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </Link>
+          {sections.map((section) => (
+            <ReceiptSectionBlock
+              key={section.key}
+              section={section}
+              viewMode={viewMode}
+            />
           ))}
         </section>
       </section>
 
       <AppNav />
     </main>
+  );
+}
+
+function ReceiptSectionBlock({
+  section,
+  viewMode,
+}: {
+  section: ReceiptSection;
+  viewMode: ReceiptViewMode;
+}) {
+  return (
+    <section>
+      <div className="mb-3 flex items-center justify-between gap-3 px-1">
+        <div>
+          <h2 className="text-base font-semibold text-[var(--text-primary)]">{section.title}</h2>
+          <p className="mt-1 text-xs uppercase tracking-[0.16em] text-[var(--text-muted)]">
+            {section.items.length} receipt{section.items.length === 1 ? "" : "s"}
+          </p>
+        </div>
+      </div>
+
+      {viewMode === "gallery" ? (
+        <div className="grid grid-cols-3 gap-3">
+          {section.items.map((item) => (
+            <GalleryReceiptCard key={item.id} item={item} />
+          ))}
+        </div>
+      ) : (
+        <div className="grid gap-3">
+          {section.items.map((item) => (
+            <ListReceiptCard key={item.id} item={item} />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function GalleryReceiptCard({ item }: { item: ReceiptListItem }) {
+  return (
+    <Link
+      href={`/receipts/${item.id}`}
+      className="glass-panel overflow-hidden rounded-[24px] transition hover:-translate-y-0.5"
+    >
+      <div className="aspect-[0.78] overflow-hidden bg-[var(--surface-soft)]">
+        {item.signed_image_url ? (
+          <img
+            src={item.signed_image_url}
+            alt={item.merchant_name ?? "Receipt image"}
+            className="h-full w-full object-cover"
+          />
+        ) : (
+          <div className="flex h-full items-center justify-center px-3 text-center text-xs text-[var(--text-muted)]">
+            No image
+          </div>
+        )}
+      </div>
+
+      <div className="space-y-2 px-3 py-3">
+        <div className="flex items-start justify-between gap-2">
+          <p className="min-w-0 truncate text-sm font-semibold text-[var(--text-primary)]">
+            {renderMerchantLabel(item)}
+          </p>
+          <StatusPill compact status={resolveDisplayStatus(item)} />
+        </div>
+        <p className="truncate text-xs text-[var(--text-secondary)]">
+          {item.total_amount != null
+            ? formatCurrency(item.total_amount, normalizeCurrency(item.currency))
+            : item.status === "processing"
+              ? "Extracting..."
+              : "Unknown"}
+        </p>
+        <p className="text-xs text-[var(--text-muted)]">
+          {formatReceiptDate(item.receipt_date, item.created_at)}
+        </p>
+      </div>
+    </Link>
+  );
+}
+
+function ListReceiptCard({ item }: { item: ReceiptListItem }) {
+  return (
+    <Link
+      href={`/receipts/${item.id}`}
+      className="glass-panel overflow-hidden rounded-[24px] transition hover:-translate-y-0.5"
+    >
+      <div className="grid grid-cols-[80px_1fr] gap-3 p-3">
+        <div className="overflow-hidden rounded-[18px] bg-[var(--surface-soft)]">
+          {item.signed_image_url ? (
+            <img
+              src={item.signed_image_url}
+              alt={item.merchant_name ?? "Receipt image"}
+              className="h-full min-h-[80px] w-full object-cover"
+            />
+          ) : (
+            <div className="flex min-h-[80px] items-center justify-center px-2 text-center text-[11px] text-[var(--text-muted)]">
+              No image
+            </div>
+          )}
+        </div>
+
+        <div className="min-w-0">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="truncate text-sm font-semibold text-[var(--text-primary)]">
+                {renderMerchantLabel(item)}
+              </p>
+              <p className="mt-1 truncate text-xs text-[var(--text-secondary)]">
+                {item.category ?? item.folder_name ?? "Unsorted"}
+              </p>
+              {showReceiptDebug && item.extraction_error ? (
+                <p className="mt-1 text-[11px] text-[var(--danger)]">{item.extraction_error}</p>
+              ) : null}
+            </div>
+            <StatusPill compact status={resolveDisplayStatus(item)} />
+          </div>
+
+          <div className="mt-3 flex items-end justify-between gap-2">
+            <div>
+              <p className="text-[11px] uppercase tracking-[0.14em] text-[var(--text-muted)]">
+                Date
+              </p>
+              <p className="mt-1 text-xs text-[var(--text-primary)]">
+                {formatReceiptDate(item.receipt_date, item.created_at)}
+              </p>
+            </div>
+            <div className="text-right">
+              <p className="text-[11px] uppercase tracking-[0.14em] text-[var(--text-muted)]">
+                Amount
+              </p>
+              <p className="mt-1 text-sm font-semibold text-[var(--accent-strong)]">
+                {item.total_amount != null
+                  ? formatCurrency(item.total_amount, normalizeCurrency(item.currency))
+                  : item.status === "processing"
+                    ? "..."
+                    : "Unknown"}
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </Link>
   );
 }
 
@@ -468,18 +582,88 @@ function sumSpend(items: ReceiptListItem[]) {
   return items.reduce((total, item) => total + (item.total_amount ?? 0), 0);
 }
 
-function StatusPill({ status }: { status: string }) {
+function buildReceiptSections(items: ReceiptListItem[]) {
+  const grouped = new Map<string, ReceiptSection>();
+
+  items.forEach((item) => {
+    const sectionMeta = getSectionMeta(item);
+    const existing = grouped.get(sectionMeta.key);
+
+    if (existing) {
+      existing.items.push(item);
+      return;
+    }
+
+    grouped.set(sectionMeta.key, {
+      items: [item],
+      key: sectionMeta.key,
+      title: sectionMeta.title,
+    });
+  });
+
+  return [...grouped.values()];
+}
+
+function getSectionMeta(item: ReceiptListItem) {
+  const now = new Date();
+  const date = new Date(getEffectiveDateValue(item));
+  const startOfThisWeek = getStartOfWeek(now);
+  const startOfLastWeek = new Date(startOfThisWeek);
+  startOfLastWeek.setDate(startOfThisWeek.getDate() - 7);
+  const startOfThisMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+
+  if (date >= startOfThisWeek) {
+    return { key: "this-week", title: "This week" };
+  }
+
+  if (date >= startOfLastWeek && date < startOfThisWeek) {
+    return { key: "last-week", title: "Last week" };
+  }
+
+  if (date >= startOfThisMonth) {
+    return { key: "this-month", title: "This month" };
+  }
+
+  return {
+    key: `${date.getFullYear()}-${date.getMonth()}`,
+    title: new Intl.DateTimeFormat("en-GB", {
+      month: "long",
+      year: "numeric",
+    }).format(date),
+  };
+}
+
+function getStartOfWeek(date: Date) {
+  const next = new Date(date);
+  const day = next.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  next.setHours(0, 0, 0, 0);
+  next.setDate(next.getDate() + diff);
+  return next;
+}
+
+function getEffectiveDateValue(item: ReceiptListItem) {
+  return item.receipt_date ?? item.created_at.slice(0, 10);
+}
+
+function getReceiptTimestamp(item: ReceiptListItem) {
+  return new Date(item.receipt_date ?? item.created_at).getTime();
+}
+
+function StatusPill({ status, compact = false }: { status: string; compact?: boolean }) {
   const className =
     status === "done"
-      ? "bg-[rgba(143,247,208,0.14)] text-[var(--accent)]"
+      ? "bg-[var(--success-bg)] text-[var(--accent-strong)]"
       : status === "partially read"
-        ? "bg-[rgba(255,214,102,0.16)] text-[#ffd666]"
+        ? "warning-card text-[var(--warning)]"
         : status === "failed"
-          ? "bg-[rgba(255,139,158,0.14)] text-[var(--danger)]"
-          : "bg-white/8 text-[var(--text-secondary)]";
+          ? "danger-card"
+          : "bg-[var(--surface-soft)] text-[var(--text-secondary)]";
 
   return (
-    <span className={`rounded-full px-3 py-1 text-[11px] uppercase tracking-[0.14em] ${className}`}>
+    <span
+      className={`rounded-full px-3 py-1 uppercase tracking-[0.14em] ${compact ? "text-[10px]" : "text-[11px]"} ${className}`}
+    >
       {status}
     </span>
   );
@@ -492,9 +676,9 @@ type InsightCardProps = {
 
 function InsightCard({ label, value }: InsightCardProps) {
   return (
-    <div className="rounded-[22px] border border-white/10 bg-white/5 p-4">
+    <div className="rounded-[22px] border border-[var(--border-soft)] bg-[var(--card-soft)] p-4">
       <p className="text-xs uppercase tracking-[0.16em] text-[var(--text-muted)]">{label}</p>
-      <p className="mt-2 text-sm font-medium leading-6 text-white">{value}</p>
+      <p className="mt-2 text-sm font-medium leading-6 text-[var(--text-primary)]">{value}</p>
     </div>
   );
 }
@@ -513,7 +697,7 @@ function SelectField({ label, onChange, options, value }: SelectFieldProps) {
       <select
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="w-full rounded-2xl border border-white/10 bg-white/4 px-4 py-3 text-sm outline-none focus:border-[var(--border-strong)]"
+        className="field-control w-full rounded-2xl px-4 py-3 text-sm outline-none"
       >
         <option value="">All</option>
         {options.map((option) => (
@@ -546,7 +730,7 @@ function InputField({
         type={type}
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="w-full rounded-2xl border border-white/10 bg-white/4 px-4 py-3 text-sm outline-none focus:border-[var(--border-strong)]"
+        className="field-control w-full rounded-2xl px-4 py-3 text-sm outline-none"
       />
     </label>
   );

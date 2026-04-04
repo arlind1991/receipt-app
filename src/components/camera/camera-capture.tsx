@@ -261,8 +261,8 @@ export function CameraCapture() {
   }
 
   return (
-    <main className="app-shell relative overflow-hidden">
-      <section className="relative mx-auto flex min-h-[calc(100dvh-30px)] w-full max-w-md flex-col justify-between">
+    <main className="app-shell app-shell-with-nav relative overflow-hidden">
+      <section className="relative mx-auto flex min-h-[calc(100dvh-30px)] w-full max-w-md flex-col pb-32">
         <div className="mb-4 flex items-start justify-between">
           <div>
             <p className="eyebrow">Camera First</p>
@@ -271,7 +271,7 @@ export function CameraCapture() {
           <button
             type="button"
             onClick={() => router.push("/receipts")}
-            className="soft-card rounded-full px-4 py-2 text-sm text-[var(--text-secondary)] transition hover:text-white"
+            className="secondary-button rounded-full px-4 py-2 text-sm transition"
           >
             Library
           </button>
@@ -288,9 +288,9 @@ export function CameraCapture() {
                   muted
                   className="h-full min-h-[62dvh] w-full object-cover"
                 />
-                <div className="pointer-events-none absolute inset-x-0 top-0 h-28 bg-gradient-to-b from-black/50 to-transparent" />
-                <div className="pointer-events-none absolute inset-x-0 bottom-0 h-36 bg-gradient-to-t from-black/60 to-transparent" />
-                <div className="pointer-events-none absolute top-4 left-4 rounded-full bg-black/28 px-3 py-2 text-xs text-white/72">
+                <div className="pointer-events-none absolute inset-x-0 top-0 h-28 bg-gradient-to-b from-[var(--camera-top-fade)] to-transparent" />
+                <div className="pointer-events-none absolute inset-x-0 bottom-0 h-36 bg-gradient-to-t from-[var(--camera-bottom-fade)] to-transparent" />
+                <div className="pointer-events-none absolute top-4 left-4 rounded-full bg-[var(--overlay-backdrop)] px-3 py-2 text-xs text-white/72">
                   {isCameraReady ? "Live camera" : "Starting camera"}
                 </div>
               </>
@@ -306,7 +306,7 @@ export function CameraCapture() {
                     {detection.boxes.map((box, index) => (
                       <div
                         key={`${box.index}-${index}`}
-                        className="absolute rounded-[22px] border-2 border-[rgba(143,247,208,0.82)] bg-[rgba(143,247,208,0.08)] shadow-[0_0_0_1px_rgba(4,10,18,0.45)]"
+                        className="absolute rounded-[22px] border-2 border-[rgba(143,247,208,0.82)] bg-[rgba(143,247,208,0.12)] shadow-[0_0_0_1px_rgba(4,10,18,0.25)]"
                         style={{
                           height: `${box.height * 100}%`,
                           left: `${box.x * 100}%`,
@@ -314,7 +314,7 @@ export function CameraCapture() {
                           width: `${box.width * 100}%`,
                         }}
                       >
-                        <span className="absolute top-2 left-2 rounded-full bg-[rgba(4,10,18,0.82)] px-2 py-1 text-[11px] uppercase tracking-[0.14em] text-white">
+                        <span className="absolute top-2 left-2 rounded-full bg-[var(--overlay-backdrop)] px-2 py-1 text-[11px] uppercase tracking-[0.14em] text-white">
                           Receipt {index + 1}
                         </span>
                       </div>
@@ -325,12 +325,12 @@ export function CameraCapture() {
             )}
 
             {isOverlayVisible ? (
-              <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(4,9,17,0.12),rgba(4,9,17,0.66))]">
+              <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(4,9,17,0.12),var(--overlay-backdrop))]">
                 <div className="scan-sweep absolute inset-x-6 top-8 bottom-8 rounded-[26px] border border-[rgba(143,247,208,0.22)]" />
-                <div className="absolute inset-x-8 bottom-8 rounded-[28px] border border-white/10 bg-[rgba(4,10,18,0.66)] p-5 backdrop-blur-xl">
+                <div className="absolute inset-x-8 bottom-8 rounded-[28px] border border-[var(--border-soft)] bg-[var(--surface-strong)] p-5 backdrop-blur-xl">
                   <div className="mb-4 flex items-center gap-3">
                     <span className="scan-spinner h-4 w-4 rounded-full border-2 border-[rgba(143,247,208,0.24)] border-t-[var(--accent)]" />
-                    <p className="text-base font-semibold text-white">
+                    <p className="text-base font-semibold text-[var(--text-primary)]">
                       {stage === "detecting" ? "Scanning receipt..." : "Saving and scanning..."}
                     </p>
                   </div>
@@ -344,8 +344,8 @@ export function CameraCapture() {
             ) : null}
 
             {stage === "choose" && detection ? (
-              <div className="absolute inset-x-3 bottom-3 rounded-[28px] border border-white/10 bg-[rgba(4,10,18,0.78)] p-4 backdrop-blur-xl">
-                <p className="text-base font-semibold text-white">
+              <div className="absolute inset-x-3 bottom-3 rounded-[28px] border border-[var(--border-soft)] bg-[var(--surface-strong)] p-4 backdrop-blur-xl">
+                <p className="text-base font-semibold text-[var(--text-primary)]">
                   We found {detection.receiptCount} receipts
                 </p>
                 <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
@@ -357,7 +357,7 @@ export function CameraCapture() {
                       key={`${box.index}-${index}`}
                       type="button"
                       onClick={() => void handleSelectDetectedReceipt(index)}
-                      className="w-full rounded-full border border-white/12 px-4 py-3 text-sm font-medium text-white transition hover:bg-white/8"
+                      className="field-control w-full rounded-full px-4 py-3 text-sm font-medium transition hover:bg-[var(--nav-hover)]"
                     >
                       Scan receipt {index + 1}
                     </button>
@@ -365,14 +365,14 @@ export function CameraCapture() {
                   <button
                     type="button"
                     onClick={() => void handleScanAllDetectedReceipts()}
-                    className="w-full rounded-full bg-[var(--accent)] px-4 py-3 text-sm font-semibold text-[#082319] transition hover:bg-[var(--accent-strong)]"
+                    className="w-full rounded-full bg-[var(--accent)] px-4 py-3 text-sm font-semibold text-[var(--text-on-accent)] transition hover:bg-[var(--accent-strong)]"
                   >
                     Scan all separately
                   </button>
                   <button
                     type="button"
                     onClick={() => void resetCaptureFlow()}
-                    className="w-full rounded-full border border-white/12 px-4 py-3 text-sm font-medium text-white transition hover:bg-white/8"
+                    className="field-control w-full rounded-full px-4 py-3 text-sm font-medium transition hover:bg-[var(--nav-hover)]"
                   >
                     Retake photo
                   </button>
@@ -382,28 +382,41 @@ export function CameraCapture() {
           </div>
 
           {errorMessage ? (
-            <div className="absolute right-3 bottom-3 left-3">
+            <div className="absolute right-3 bottom-3 left-3 pr-0">
               <StatusBanner tone="error" message={errorMessage} />
             </div>
           ) : null}
         </div>
-
-        <section className="mt-4 flex flex-col items-center gap-4">
-          <button
-            type="button"
-            onClick={() => void handleCapture()}
-            disabled={!isCameraReady || stage !== "camera"}
-            className="capture-ring flex h-[5.5rem] w-[5.5rem] items-center justify-center rounded-full border border-white/24 bg-white/6 p-2 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            <span className="h-16 w-16 rounded-full bg-[var(--accent)] shadow-[0_0_40px_rgba(143,247,208,0.55)]" />
-          </button>
-          <p className="text-center text-sm text-[var(--text-secondary)]">
-            {selectedFolderId !== UNSORTED_FOLDER_ID
-              ? `Saving into ${folders.find((folder) => folder.id === selectedFolderId)?.name ?? "your last folder"} after capture.`
-              : "Frame the receipt and tap once to capture, scan, and open the result."}
-          </p>
-        </section>
       </section>
+
+      {stage === "camera" ? (
+        <section className="floating-action-bar">
+          <div className="glass-panel rounded-[30px] px-4 py-4 shadow-[0_20px_60px_rgba(2,9,17,0.5)]">
+            <div className="flex items-center justify-between gap-4">
+              <div className="min-w-0">
+                <p className="eyebrow">Quick Capture</p>
+                <p className="mt-2 text-sm font-medium text-[var(--text-primary)]">
+                  {isCameraReady ? "Ready to snap" : "Preparing capture"}
+                </p>
+                <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">
+                  {selectedFolderId !== UNSORTED_FOLDER_ID
+                    ? `Saving into ${folders.find((folder) => folder.id === selectedFolderId)?.name ?? "your last folder"}.`
+                    : "Tap once to capture, scan, and open the receipt."}
+                </p>
+              </div>
+              <button
+                type="button"
+                aria-label="Capture receipt"
+                onClick={() => void handleCapture()}
+                disabled={!isCameraReady}
+                className="capture-ring shrink-0 flex h-[5.75rem] w-[5.75rem] items-center justify-center rounded-full border border-[var(--border-soft)] bg-[linear-gradient(180deg,var(--surface-soft),transparent)] p-2 shadow-[0_16px_40px_rgba(0,0,0,0.18)] disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <span className="h-[4.15rem] w-[4.15rem] rounded-full bg-[var(--accent)] shadow-[0_0_40px_rgba(143,247,208,0.55)]" />
+              </button>
+            </div>
+          </div>
+        </section>
+      ) : null}
 
       <canvas ref={canvasRef} className="hidden" />
       <AppNav />

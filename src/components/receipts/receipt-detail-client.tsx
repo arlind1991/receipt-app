@@ -35,10 +35,15 @@ export function ReceiptDetailClient({
 }: ReceiptDetailClientProps) {
   const router = useRouter();
   const [receipt, setReceipt] = useState<ReceiptDetail | null>(null);
-  const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [statusBanner, setStatusBanner] = useState<{
+    message: string;
+    tone: "error" | "info";
+  } | null>(null);
   const [loading, setLoading] = useState(true);
   const [isSavingEdits, setIsSavingEdits] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isImageViewerOpen, setIsImageViewerOpen] = useState(false);
+  const [saveCompleted, setSaveCompleted] = useState(false);
   const [folders, setFolders] = useState<FolderRow[]>([]);
   const [duplicateCandidates, setDuplicateCandidates] = useState<DuplicateReceiptCandidate[]>([]);
   const merchantInputRef = useRef<HTMLInputElement | null>(null);
@@ -134,13 +139,21 @@ export function ReceiptDetailClient({
     void refreshDuplicateCandidates(nextReceipt);
   }
 
+  function updateEditField(
+    field: keyof typeof editValues,
+    value: string,
+  ) {
+    setSaveCompleted(false);
+    setEditValues((current) => ({ ...current, [field]: value }));
+  }
+
   const loadReceipt = useEffectEvent(async () => {
     setLoading(true);
-    setStatusMessage(null);
+    setStatusBanner(null);
 
     const result = await fetchReceipt();
     if (!result.ok) {
-      setStatusMessage(result.error);
+      setStatusBanner({ message: result.error, tone: "error" });
       setLoading(false);
       return;
     }
@@ -151,11 +164,11 @@ export function ReceiptDetailClient({
 
   async function handleRefresh() {
     setLoading(true);
-    setStatusMessage(null);
+    setStatusBanner(null);
 
     const result = await fetchReceipt();
     if (!result.ok) {
-      setStatusMessage(result.error);
+      setStatusBanner({ message: result.error, tone: "error" });
       setLoading(false);
       return;
     }
@@ -167,12 +180,12 @@ export function ReceiptDetailClient({
   const triggerProcessing = useEffectEvent(async () => {
     const result = await triggerReceiptProcessing(receiptId);
     if (!result.ok) {
-      setStatusMessage(result.error);
+      setStatusBanner({ message: result.error, tone: "error" });
     }
 
     const refreshed = await fetchReceipt();
     if (!refreshed.ok) {
-      setStatusMessage(refreshed.error);
+      setStatusBanner({ message: refreshed.error, tone: "error" });
       return;
     }
 
@@ -265,7 +278,7 @@ export function ReceiptDetailClient({
     }
 
     setIsSavingEdits(true);
-    setStatusMessage(null);
+    setStatusBanner(null);
 
     const payload: ReceiptEditableFields = {
       currency: editValues.currency.trim().toUpperCase() || null,
@@ -279,21 +292,45 @@ export function ReceiptDetailClient({
 
     const result = await updateReceiptFields(receipt.id, payload);
     if (!result.ok) {
-      setStatusMessage(result.error);
+      setStatusBanner({ message: result.error, tone: "error" });
       setIsSavingEdits(false);
       return;
     }
 
     const refreshed = await fetchReceipt();
     if (!refreshed.ok) {
-      setStatusMessage(refreshed.error);
+      setStatusBanner({ message: refreshed.error, tone: "error" });
       setIsSavingEdits(false);
       return;
     }
 
     applyReceipt(refreshed.data);
+    setSaveCompleted(true);
+    setStatusBanner({ message: "Changes saved.", tone: "info" });
     setIsSavingEdits(false);
   }
+
+  function handleDone() {
+    router.replace("/receipts");
+    router.refresh();
+  }
+
+  useEffect(() => {
+    if (!isImageViewerOpen) {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setIsImageViewerOpen(false);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isImageViewerOpen]);
 
   async function handleDeleteReceipt() {
     if (!receipt) {
@@ -306,11 +343,11 @@ export function ReceiptDetailClient({
     }
 
     setIsDeleting(true);
-    setStatusMessage(null);
+    setStatusBanner(null);
 
     const result = await deleteReceipt(receipt.id);
     if (!result.ok) {
-      setStatusMessage(result.error);
+      setStatusBanner({ message: result.error, tone: "error" });
       setIsDeleting(false);
       return;
     }
@@ -347,13 +384,23 @@ export function ReceiptDetailClient({
     return getMissingFields(receipt);
   }, [receipt]);
 
+  const isDirty = useMemo(() => {
+    if (!receipt) {
+      return false;
+    }
+
+    return !matchesReceiptEditValues(receipt, editValues);
+  }, [editValues, receipt]);
+
+  const saveDisabled = !receipt || receipt.status === "processing" || isSavingEdits || !isDirty;
+
   return (
-    <main className="app-shell">
-      <section className="mx-auto w-full max-w-md pb-8">
+    <main className="app-shell app-shell-with-nav">
+      <section className="mx-auto w-full max-w-md pb-36">
         <div className="mb-5 flex items-center justify-between">
           <Link
             href="/receipts"
-            className="soft-card rounded-full px-4 py-2 text-sm text-[var(--text-secondary)] transition hover:text-white"
+            className="secondary-button rounded-full px-4 py-2 text-sm transition"
           >
             Back
           </Link>
@@ -361,7 +408,7 @@ export function ReceiptDetailClient({
             <button
               type="button"
               onClick={() => void handleRefresh()}
-              className="soft-card rounded-full px-4 py-2 text-sm text-[var(--text-secondary)] transition hover:text-white"
+              className="secondary-button rounded-full px-4 py-2 text-sm transition"
             >
               Refresh
             </button>
@@ -369,7 +416,9 @@ export function ReceiptDetailClient({
           </div>
         </div>
 
-        {statusMessage ? <StatusBanner tone="error" message={statusMessage} /> : null}
+        {statusBanner ? (
+          <StatusBanner tone={statusBanner.tone} message={statusBanner.message} />
+        ) : null}
 
         {loading ? (
           <div className="soft-card rounded-[28px] p-6 text-sm text-[var(--text-secondary)]">
@@ -396,11 +445,30 @@ export function ReceiptDetailClient({
 
             <section className="glass-panel overflow-hidden rounded-[32px]">
               {receipt.signed_image_url ? (
-                <img
-                  src={receipt.signed_image_url}
-                  alt={receipt.merchant_name ?? "Receipt image"}
-                  className="h-auto max-h-[56dvh] w-full object-cover"
-                />
+                <button
+                  type="button"
+                  onClick={() => setIsImageViewerOpen(true)}
+                  className="block w-full text-left"
+                >
+                  <img
+                    src={receipt.signed_image_url}
+                    alt={receipt.merchant_name ?? "Receipt image"}
+                    className="h-auto max-h-[56dvh] w-full object-cover"
+                  />
+                  <div className="flex items-center justify-between border-t border-[var(--border-soft)] bg-[var(--card-soft)] px-4 py-3">
+                    <div>
+                      <p className="text-sm font-medium text-[var(--text-primary)]">
+                        Tap to enlarge
+                      </p>
+                      <p className="mt-1 text-xs text-[var(--text-secondary)]">
+                        Open a larger full-screen view of the receipt image.
+                      </p>
+                    </div>
+                    <span className="rounded-full bg-[var(--surface-soft)] px-3 py-1 text-[11px] uppercase tracking-[0.14em] text-[var(--text-secondary)]">
+                      View
+                    </span>
+                  </div>
+                </button>
               ) : (
                 <div className="flex min-h-[320px] items-center justify-center text-sm text-[var(--text-muted)]">
                   Receipt image unavailable
@@ -411,7 +479,7 @@ export function ReceiptDetailClient({
             <section className="glass-panel rounded-[28px] p-5">
               <div className="flex items-center justify-between gap-3">
                 <p className="eyebrow">Saved Fields</p>
-                <span className="rounded-full bg-white/8 px-3 py-1 text-[11px] uppercase tracking-[0.14em] text-[var(--text-secondary)]">
+                <span className="rounded-full bg-[var(--surface-soft)] px-3 py-1 text-[11px] uppercase tracking-[0.14em] text-[var(--text-secondary)]">
                   {resolveDisplayStatus(receipt)}
                 </span>
               </div>
@@ -487,7 +555,7 @@ export function ReceiptDetailClient({
                 />
               </div>
 
-              <div className="mt-4 rounded-[24px] border border-white/10 bg-white/5 p-4">
+              <div className="mt-4 rounded-[24px] border border-[var(--border-soft)] bg-[var(--card-soft)] p-4">
                 <p className="text-xs uppercase tracking-[0.18em] text-[var(--text-muted)]">
                   OCR text
                 </p>
@@ -500,7 +568,7 @@ export function ReceiptDetailClient({
               </div>
 
               {showReceiptDebug ? (
-                <div className="mt-4 rounded-[24px] border border-white/10 bg-white/5 p-4">
+                <div className="mt-4 rounded-[24px] border border-[var(--border-soft)] bg-[var(--card-soft)] p-4">
                   <p className="text-xs uppercase tracking-[0.18em] text-[var(--text-muted)]">
                     Debug
                   </p>
@@ -510,7 +578,7 @@ export function ReceiptDetailClient({
                       <p className="mb-2 text-xs uppercase tracking-[0.16em] text-[var(--text-muted)]">
                         Parsed JSON
                       </p>
-                      <pre className="overflow-x-auto whitespace-pre-wrap rounded-2xl border border-white/10 bg-black/20 p-3 text-xs leading-6 text-white/80">
+                      <pre className="overflow-x-auto whitespace-pre-wrap rounded-2xl border border-[var(--border-soft)] bg-[var(--surface-soft)] p-3 text-xs leading-6 text-[var(--text-primary)]">
                         {receipt.parsed_ocr_json ?? "No parsed JSON saved."}
                       </pre>
                     </div>
@@ -522,25 +590,26 @@ export function ReceiptDetailClient({
             <section className="glass-panel rounded-[28px] p-5">
               <p className="eyebrow">Manual Edit</p>
               <p className="mt-3 text-sm leading-6 text-[var(--text-secondary)]">
-                Tap any missing field above or edit directly here.
+                Tap any missing field above or edit directly here. Save stays pinned below so you
+                do not need to scroll back through the form.
               </p>
-              <form onSubmit={(event) => void handleSaveEdits(event)} className="mt-4 space-y-3">
+              <form
+                id="receipt-edit-form"
+                onSubmit={(event) => void handleSaveEdits(event)}
+                className="mt-4 space-y-3"
+              >
                 <InputField
                   label="Merchant name"
                   inputRef={merchantInputRef}
                   value={editValues.merchant_name}
-                  onChange={(value) =>
-                    setEditValues((current) => ({ ...current, merchant_name: value }))
-                  }
+                  onChange={(value) => updateEditField("merchant_name", value)}
                 />
                 <InputField
                   label="Receipt date"
                   inputRef={receiptDateInputRef}
                   type="date"
                   value={editValues.receipt_date}
-                  onChange={(value) =>
-                    setEditValues((current) => ({ ...current, receipt_date: value }))
-                  }
+                  onChange={(value) => updateEditField("receipt_date", value)}
                 />
                 <InputField
                   label="Total amount"
@@ -548,9 +617,7 @@ export function ReceiptDetailClient({
                   type="number"
                   step="0.01"
                   value={editValues.total_amount}
-                  onChange={(value) =>
-                    setEditValues((current) => ({ ...current, total_amount: value }))
-                  }
+                  onChange={(value) => updateEditField("total_amount", value)}
                 />
                 <InputField
                   label="VAT amount"
@@ -558,36 +625,25 @@ export function ReceiptDetailClient({
                   type="number"
                   step="0.01"
                   value={editValues.vat_amount}
-                  onChange={(value) =>
-                    setEditValues((current) => ({ ...current, vat_amount: value }))
-                  }
+                  onChange={(value) => updateEditField("vat_amount", value)}
                 />
                 <InputField
                   label="Currency"
                   inputRef={currencyInputRef}
                   value={editValues.currency}
-                  onChange={(value) =>
-                    setEditValues((current) => ({
-                      ...current,
-                      currency: value.toUpperCase().slice(0, 3),
-                    }))
-                  }
+                  onChange={(value) => updateEditField("currency", value.toUpperCase().slice(0, 3))}
                 />
                 <InputField
                   label="Category"
                   inputRef={categoryInputRef}
                   value={editValues.category}
-                  onChange={(value) =>
-                    setEditValues((current) => ({ ...current, category: value }))
-                  }
+                  onChange={(value) => updateEditField("category", value)}
                 />
                 <SelectField
                   label="Folder"
                   selectRef={folderSelectRef}
                   value={editValues.folder_id}
-                  onChange={(value) =>
-                    setEditValues((current) => ({ ...current, folder_id: value }))
-                  }
+                  onChange={(value) => updateEditField("folder_id", value)}
                   options={[
                     { label: "Unsorted", value: "" },
                     ...folders.map((folder) => ({
@@ -596,17 +652,6 @@ export function ReceiptDetailClient({
                     })),
                   ]}
                 />
-                <button
-                  type="submit"
-                  disabled={isSavingEdits || receipt.status === "processing"}
-                  className="w-full rounded-full bg-[var(--accent)] px-4 py-3 text-sm font-semibold text-[#082319] transition hover:bg-[var(--accent-strong)] disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {receipt.status === "processing"
-                    ? "Finish processing first"
-                    : isSavingEdits
-                      ? "Saving edits..."
-                      : "Save changes"}
-                </button>
               </form>
             </section>
 
@@ -619,7 +664,7 @@ export function ReceiptDetailClient({
                 type="button"
                 onClick={() => void handleDeleteReceipt()}
                 disabled={isDeleting}
-                className="mt-5 w-full rounded-full border border-[rgba(255,139,158,0.28)] bg-[rgba(255,139,158,0.12)] px-4 py-3 text-sm font-medium text-[#ffd8de] transition hover:bg-[rgba(255,139,158,0.18)] disabled:cursor-not-allowed disabled:opacity-60"
+                className="danger-card mt-5 w-full rounded-full px-4 py-3 text-sm font-medium transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {isDeleting ? "Deleting receipt..." : "Delete receipt"}
               </button>
@@ -627,6 +672,94 @@ export function ReceiptDetailClient({
           </div>
         ) : null}
       </section>
+
+      {receipt ? (
+        <section className="floating-action-bar">
+          <div className="glass-panel rounded-[30px] px-4 py-4 shadow-[0_20px_60px_rgba(2,9,17,0.5)]">
+            <div className="flex items-center justify-between gap-4">
+              <div className="min-w-0">
+                <p className="eyebrow">{saveCompleted ? "Saved" : "Review"}</p>
+                <p className="mt-2 text-sm font-medium text-[var(--text-primary)]">
+                  {receipt.status === "processing"
+                    ? "Finish processing before saving"
+                    : saveCompleted
+                      ? "Receipt saved"
+                      : isDirty
+                        ? "Unsaved changes ready"
+                        : "No unsaved changes"}
+                </p>
+                <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">
+                  {saveCompleted
+                    ? "Your edits are stored. Done takes you back to the receipts gallery."
+                    : receipt.status === "processing"
+                      ? "Fields will become editable once OCR has finished."
+                      : isDirty
+                        ? "Save from anywhere on the page without losing your place."
+                        : "Make an edit and the save action will become available here."}
+                </p>
+              </div>
+
+              {saveCompleted ? (
+                <div className="flex shrink-0 items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleDone}
+                    className="rounded-full bg-[var(--accent)] px-5 py-3 text-sm font-semibold text-[var(--text-on-accent)] transition hover:bg-[var(--accent-strong)]"
+                  >
+                    Done
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="submit"
+                  form="receipt-edit-form"
+                  disabled={saveDisabled}
+                  className="shrink-0 rounded-full bg-[var(--accent)] px-5 py-3 text-sm font-semibold text-[var(--text-on-accent)] transition hover:bg-[var(--accent-strong)] disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {receipt.status === "processing"
+                    ? "Finish processing"
+                    : isSavingEdits
+                      ? "Saving..."
+                      : isDirty
+                        ? "Save changes"
+                        : "Saved"}
+                </button>
+              )}
+            </div>
+          </div>
+        </section>
+      ) : null}
+
+      {receipt?.signed_image_url && isImageViewerOpen ? (
+        <section
+          className="fixed inset-0 z-[70] bg-[var(--overlay-backdrop)]"
+          onClick={() => setIsImageViewerOpen(false)}
+        >
+          <div className="flex min-h-dvh flex-col px-4 py-[max(1rem,env(safe-area-inset-top,0px))]">
+            <div className="mx-auto flex w-full max-w-4xl justify-end">
+              <button
+                type="button"
+                onClick={() => setIsImageViewerOpen(false)}
+                className="secondary-button rounded-full px-4 py-2 text-sm font-medium"
+              >
+                Close
+              </button>
+            </div>
+            <div className="flex flex-1 items-center justify-center py-4">
+              <div
+                className="max-h-full w-full max-w-4xl overflow-auto rounded-[28px]"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <img
+                  src={receipt.signed_image_url}
+                  alt={receipt.merchant_name ?? "Receipt image enlarged"}
+                  className="mx-auto h-auto w-full rounded-[28px] object-contain shadow-[0_24px_80px_rgba(0,0,0,0.35)]"
+                />
+              </div>
+            </div>
+          </div>
+        </section>
+      ) : null}
     </main>
   );
 }
@@ -669,12 +802,12 @@ function FieldCard({ label, missing = false, onClick, value }: FieldCardProps) {
       onClick={onClick}
       className={`rounded-[22px] border p-4 text-left ${
         missing
-          ? "border-[rgba(255,214,102,0.28)] bg-[rgba(255,214,102,0.08)]"
-          : "border-white/10 bg-white/5"
+          ? "warning-card"
+          : "border-[var(--border-soft)] bg-[var(--card-soft)]"
       }`}
     >
       <p className="text-xs uppercase tracking-[0.16em] text-[var(--text-muted)]">{label}</p>
-      <p className="mt-2 text-sm font-medium text-white">{value}</p>
+      <p className="mt-2 text-sm font-medium text-[var(--text-primary)]">{value}</p>
       <p className="mt-3 text-xs text-[var(--text-secondary)]">Tap to edit</p>
     </button>
   );
@@ -706,7 +839,7 @@ function InputField({
         step={step}
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="w-full rounded-2xl border border-white/12 bg-white/6 px-4 py-3 text-sm outline-none placeholder:text-[var(--text-muted)] focus:border-[var(--border-strong)]"
+        className="field-control w-full rounded-2xl px-4 py-3 text-sm outline-none"
       />
     </label>
   );
@@ -733,6 +866,29 @@ function getFirstMissingField(receipt: ReceiptDetail) {
   if (!receipt.currency) return "currency";
   if (!receipt.category) return "category";
   return null;
+}
+
+function matchesReceiptEditValues(
+  receipt: ReceiptDetail,
+  editValues: {
+    currency: string;
+    folder_id: string;
+    merchant_name: string;
+    receipt_date: string;
+    total_amount: string;
+    vat_amount: string;
+    category: string;
+  },
+) {
+  return (
+    (receipt.currency ?? "") === editValues.currency &&
+    (receipt.folder_id ?? "") === editValues.folder_id &&
+    (receipt.merchant_name ?? "") === editValues.merchant_name &&
+    (receipt.receipt_date ?? "") === editValues.receipt_date &&
+    (receipt.total_amount != null ? String(receipt.total_amount) : "") === editValues.total_amount &&
+    (receipt.vat_amount != null ? String(receipt.vat_amount) : "") === editValues.vat_amount &&
+    (receipt.category ?? "") === editValues.category
+  );
 }
 
 function formatDuplicateSummary(duplicates: DuplicateReceiptCandidate[]) {
@@ -769,7 +925,7 @@ function SelectField({ label, onChange, options, selectRef, value }: SelectField
         ref={selectRef}
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="w-full rounded-2xl border border-white/12 bg-[rgba(14,20,27,0.96)] px-4 py-3 text-sm outline-none focus:border-[var(--border-strong)]"
+        className="field-control w-full rounded-2xl px-4 py-3 text-sm outline-none"
       >
         {options.map((option) => (
           <option key={option.value || "empty"} value={option.value}>

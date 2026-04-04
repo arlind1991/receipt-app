@@ -24,8 +24,8 @@ export function AppNav() {
               href={item.href}
               className={`rounded-full px-4 py-3 text-center text-sm font-medium transition ${
                 active
-                  ? "bg-[var(--accent)] text-[#072018]"
-                  : "text-[var(--text-secondary)] hover:bg-white/6 hover:text-white"
+                  ? "bg-[var(--accent)] text-[var(--text-on-accent)]"
+                  : "text-[var(--text-secondary)] hover:bg-[var(--nav-hover)] hover:text-[var(--text-primary)]"
               }`}
             >
               {item.label}

@@ -66,7 +66,7 @@ export function ResetPasswordScreen() {
               autoComplete="new-password"
               value={password}
               onChange={(event) => setPassword(event.target.value)}
-              className="w-full rounded-2xl border border-white/12 bg-white/6 px-4 py-3 text-sm outline-none focus:border-[var(--border-strong)]"
+              className="field-control w-full rounded-2xl px-4 py-3 text-sm outline-none"
             />
           </label>
 
@@ -80,14 +80,14 @@ export function ResetPasswordScreen() {
               autoComplete="new-password"
               value={confirmPassword}
               onChange={(event) => setConfirmPassword(event.target.value)}
-              className="w-full rounded-2xl border border-white/12 bg-white/6 px-4 py-3 text-sm outline-none focus:border-[var(--border-strong)]"
+              className="field-control w-full rounded-2xl px-4 py-3 text-sm outline-none"
             />
           </label>
 
           <button
             type="submit"
             disabled={isSubmitting}
-            className="w-full rounded-full bg-[var(--accent)] px-4 py-3 text-sm font-semibold text-[#082319] transition hover:bg-[var(--accent-strong)] disabled:cursor-not-allowed disabled:opacity-60"
+            className="w-full rounded-full bg-[var(--accent)] px-4 py-3 text-sm font-semibold text-[var(--text-on-accent)] transition hover:bg-[var(--accent-strong)] disabled:cursor-not-allowed disabled:opacity-60"
           >
             {isSubmitting ? "Updating password..." : "Update password"}
           </button>

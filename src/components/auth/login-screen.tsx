@@ -148,7 +148,7 @@ export function LoginScreen() {
             type="button"
             disabled={isSubmitting}
             onClick={() => void handleSocialSignIn("google")}
-            className="w-full rounded-full border border-white/12 bg-white/6 px-4 py-3 text-sm font-medium text-white transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
+            className="field-control w-full rounded-full px-4 py-3 text-sm font-medium transition hover:bg-[var(--nav-hover)] disabled:cursor-not-allowed disabled:opacity-60"
           >
             Continue with Google
           </button>
@@ -156,16 +156,16 @@ export function LoginScreen() {
             type="button"
             disabled={isSubmitting}
             onClick={() => void handleSocialSignIn("apple")}
-            className="w-full rounded-full border border-white/12 bg-white/6 px-4 py-3 text-sm font-medium text-white transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
+            className="field-control w-full rounded-full px-4 py-3 text-sm font-medium transition hover:bg-[var(--nav-hover)] disabled:cursor-not-allowed disabled:opacity-60"
           >
             Continue with Apple
           </button>
         </div>
 
         <div className="my-6 flex items-center gap-3 text-xs uppercase tracking-[0.2em] text-[var(--text-muted)]">
-          <span className="h-px flex-1 bg-white/10" />
+          <span className="divider-line h-px flex-1" />
           <span>Email</span>
-          <span className="h-px flex-1 bg-white/10" />
+          <span className="divider-line h-px flex-1" />
         </div>
 
         <form onSubmit={(event) => void handleSubmit(event)} className="space-y-4">
@@ -179,7 +179,7 @@ export function LoginScreen() {
               value={email}
               onChange={(event) => setEmail(event.target.value)}
               placeholder="you@example.com"
-              className="w-full rounded-2xl border border-white/12 bg-white/6 px-4 py-3 text-sm outline-none placeholder:text-[var(--text-muted)] focus:border-[var(--border-strong)]"
+              className="field-control w-full rounded-2xl px-4 py-3 text-sm outline-none"
             />
           </label>
 
@@ -193,7 +193,7 @@ export function LoginScreen() {
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
                 placeholder="Your password"
-                className="w-full rounded-2xl border border-white/12 bg-white/6 px-4 py-3 text-sm outline-none placeholder:text-[var(--text-muted)] focus:border-[var(--border-strong)]"
+                className="field-control w-full rounded-2xl px-4 py-3 text-sm outline-none"
               />
             </label>
           ) : null}
@@ -201,7 +201,7 @@ export function LoginScreen() {
           <button
             type="submit"
             disabled={isSubmitting}
-            className="w-full rounded-full bg-[var(--accent)] px-4 py-3 text-sm font-semibold text-[#082319] transition hover:bg-[var(--accent-strong)] disabled:cursor-not-allowed disabled:opacity-60"
+            className="w-full rounded-full bg-[var(--accent)] px-4 py-3 text-sm font-semibold text-[var(--text-on-accent)] transition hover:bg-[var(--accent-strong)] disabled:cursor-not-allowed disabled:opacity-60"
           >
             {isSubmitting
               ? mode === "forgot_password"
@@ -222,7 +222,7 @@ export function LoginScreen() {
             <button
               type="button"
               onClick={() => setMode("sign_in")}
-              className="transition hover:text-white"
+              className="transition hover:text-[var(--text-primary)]"
             >
               Sign in instead
             </button>
@@ -232,7 +232,7 @@ export function LoginScreen() {
             <button
               type="button"
               onClick={() => setMode("sign_up")}
-              className="transition hover:text-white"
+              className="transition hover:text-[var(--text-primary)]"
             >
               Create account
             </button>
@@ -242,18 +242,18 @@ export function LoginScreen() {
             <button
               type="button"
               onClick={() => setMode("forgot_password")}
-              className="transition hover:text-white"
+              className="transition hover:text-[var(--text-primary)]"
             >
               Forgot password
             </button>
           ) : null}
         </div>
 
-        <div className="mt-6 rounded-[24px] border border-white/10 bg-white/5 p-4">
+        <div className="mt-6 rounded-[24px] border border-[var(--border-soft)] bg-[var(--card-soft)] p-4">
           <button
             type="button"
             onClick={() => setShowMagicLink((current) => !current)}
-            className="text-sm font-medium text-white transition hover:text-[var(--accent)]"
+            className="text-sm font-medium text-[var(--text-primary)] transition hover:text-[var(--accent)]"
           >
             {showMagicLink ? "Hide magic link option" : "Use magic link instead"}
           </button>
@@ -267,7 +267,7 @@ export function LoginScreen() {
                 type="button"
                 disabled={isSubmitting || !email.trim()}
                 onClick={() => void handleMagicLink()}
-                className="w-full rounded-full border border-white/12 px-4 py-3 text-sm font-medium text-white transition hover:bg-white/8 disabled:cursor-not-allowed disabled:opacity-60"
+                className="field-control w-full rounded-full px-4 py-3 text-sm font-medium transition hover:bg-[var(--nav-hover)] disabled:cursor-not-allowed disabled:opacity-60"
               >
                 Send magic link
               </button>

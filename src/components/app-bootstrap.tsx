@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { initializeSession } from "@/lib/supabase/session";
 import { StatusBanner } from "@/components/status-banner";
+import { getThemePreference, type ThemePreference } from "@/lib/local-storage";
 
 function isLocalDevHost() {
   if (typeof window === "undefined") {
@@ -78,6 +79,23 @@ export function AppBootstrap() {
     void initializeSession();
   }, []);
 
+  useEffect(() => {
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+
+    const syncTheme = () => {
+      applyThemePreference(getThemePreference());
+    };
+
+    syncTheme();
+    media.addEventListener("change", syncTheme);
+    window.addEventListener("storage", syncTheme);
+
+    return () => {
+      media.removeEventListener("change", syncTheme);
+      window.removeEventListener("storage", syncTheme);
+    };
+  }, []);
+
   async function handleApplyUpdate() {
     if (!waitingWorker) {
       window.location.reload();
@@ -100,6 +118,16 @@ export function AppBootstrap() {
       ) : null}
     </>
   );
+}
+
+function applyThemePreference(preference: ThemePreference) {
+  const root = document.documentElement;
+  if (preference === "system") {
+    root.removeAttribute("data-theme");
+    return;
+  }
+
+  root.setAttribute("data-theme", preference);
 }
 
 async function unregisterLocalServiceWorkers() {

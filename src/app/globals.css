@@ -1,19 +1,154 @@
 @import "tailwindcss";
 
 :root {
+  --app-bg: #f4f7fb;
+  --app-bg-top: rgba(85, 194, 160, 0.14);
+  --app-bg-mid: #f4f7fb;
+  --app-bg-bottom: #e7edf4;
+  --surface: rgba(255, 255, 255, 0.78);
+  --surface-strong: rgba(255, 255, 255, 0.96);
+  --surface-soft: rgba(255, 255, 255, 0.7);
+  --card-soft: rgba(255, 255, 255, 0.58);
+  --field-fill: rgba(255, 255, 255, 0.88);
+  --field-border: rgba(20, 37, 56, 0.12);
+  --border-soft: rgba(20, 37, 56, 0.12);
+  --border-strong: rgba(76, 211, 165, 0.34);
+  --text-primary: #0f1e2d;
+  --text-secondary: #5d7086;
+  --text-muted: #7f90a2;
+  --text-strong: #08111f;
+  --text-on-accent: #082319;
+  --accent: #4cc6a1;
+  --accent-strong: #2ea685;
+  --danger: #d95c78;
+  --warning: #b98116;
+  --warning-bg: rgba(245, 182, 66, 0.16);
+  --warning-border: rgba(245, 182, 66, 0.28);
+  --danger-bg: rgba(217, 92, 120, 0.12);
+  --danger-border: rgba(217, 92, 120, 0.24);
+  --danger-text: #9f1f45;
+  --success-bg: rgba(76, 198, 161, 0.12);
+  --shadow-glow: 0 24px 80px rgba(17, 33, 51, 0.12);
+  --overlay-backdrop: rgba(5, 10, 18, 0.78);
+  --nav-hover: rgba(20, 37, 56, 0.06);
+  --rule: rgba(20, 37, 56, 0.12);
+  --camera-top-fade: rgba(4, 10, 18, 0.16);
+  --camera-bottom-fade: rgba(4, 10, 18, 0.42);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --app-bg: #08111f;
+    --app-bg-top: rgba(143, 247, 208, 0.14);
+    --app-bg-mid: #08111f;
+    --app-bg-bottom: #050a12;
+    --surface: rgba(9, 18, 31, 0.78);
+    --surface-strong: rgba(10, 20, 34, 0.95);
+    --surface-soft: rgba(255, 255, 255, 0.08);
+    --card-soft: rgba(255, 255, 255, 0.05);
+    --field-fill: rgba(255, 255, 255, 0.06);
+    --field-border: rgba(255, 255, 255, 0.12);
+    --border-soft: rgba(255, 255, 255, 0.12);
+    --border-strong: rgba(157, 255, 224, 0.22);
+    --text-primary: #f4f7fb;
+    --text-secondary: #9fb2c7;
+    --text-muted: #70849d;
+    --text-strong: #ffffff;
+    --text-on-accent: #082319;
+    --accent: #8ff7d0;
+    --accent-strong: #4cd3a5;
+    --danger: #ff8b9e;
+    --warning: #ffd666;
+    --warning-bg: rgba(255, 214, 102, 0.08);
+    --warning-border: rgba(255, 214, 102, 0.28);
+    --danger-bg: rgba(255, 139, 158, 0.12);
+    --danger-border: rgba(255, 139, 158, 0.28);
+    --danger-text: #ffd8de;
+    --success-bg: rgba(143, 247, 208, 0.08);
+    --shadow-glow: 0 24px 80px rgba(2, 9, 17, 0.42);
+    --overlay-backdrop: rgba(5, 10, 18, 0.86);
+    --nav-hover: rgba(255, 255, 255, 0.06);
+    --rule: rgba(255, 255, 255, 0.1);
+    --camera-top-fade: rgba(0, 0, 0, 0.5);
+    --camera-bottom-fade: rgba(0, 0, 0, 0.6);
+  }
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
   --app-bg: #08111f;
+  --app-bg-top: rgba(143, 247, 208, 0.14);
+  --app-bg-mid: #08111f;
+  --app-bg-bottom: #050a12;
   --surface: rgba(9, 18, 31, 0.78);
   --surface-strong: rgba(10, 20, 34, 0.95);
   --surface-soft: rgba(255, 255, 255, 0.08);
+  --card-soft: rgba(255, 255, 255, 0.05);
+  --field-fill: rgba(255, 255, 255, 0.06);
+  --field-border: rgba(255, 255, 255, 0.12);
   --border-soft: rgba(255, 255, 255, 0.12);
   --border-strong: rgba(157, 255, 224, 0.22);
   --text-primary: #f4f7fb;
   --text-secondary: #9fb2c7;
   --text-muted: #70849d;
+  --text-strong: #ffffff;
+  --text-on-accent: #082319;
   --accent: #8ff7d0;
   --accent-strong: #4cd3a5;
   --danger: #ff8b9e;
+  --warning: #ffd666;
+  --warning-bg: rgba(255, 214, 102, 0.08);
+  --warning-border: rgba(255, 214, 102, 0.28);
+  --danger-bg: rgba(255, 139, 158, 0.12);
+  --danger-border: rgba(255, 139, 158, 0.28);
+  --danger-text: #ffd8de;
+  --success-bg: rgba(143, 247, 208, 0.08);
   --shadow-glow: 0 24px 80px rgba(2, 9, 17, 0.42);
+  --overlay-backdrop: rgba(5, 10, 18, 0.86);
+  --nav-hover: rgba(255, 255, 255, 0.06);
+  --rule: rgba(255, 255, 255, 0.1);
+  --camera-top-fade: rgba(0, 0, 0, 0.5);
+  --camera-bottom-fade: rgba(0, 0, 0, 0.6);
+}
+
+:root[data-theme="light"] {
+  --app-bg: #f4f7fb;
+  --app-bg-top: rgba(85, 194, 160, 0.14);
+  --app-bg-mid: #f4f7fb;
+  --app-bg-bottom: #e7edf4;
+  --surface: rgba(255, 255, 255, 0.78);
+  --surface-strong: rgba(255, 255, 255, 0.96);
+  --surface-soft: rgba(255, 255, 255, 0.7);
+  --card-soft: rgba(255, 255, 255, 0.58);
+  --field-fill: rgba(255, 255, 255, 0.88);
+  --field-border: rgba(20, 37, 56, 0.12);
+  --border-soft: rgba(20, 37, 56, 0.12);
+  --border-strong: rgba(76, 211, 165, 0.34);
+  --text-primary: #0f1e2d;
+  --text-secondary: #5d7086;
+  --text-muted: #7f90a2;
+  --text-strong: #08111f;
+  --text-on-accent: #082319;
+  --accent: #4cc6a1;
+  --accent-strong: #2ea685;
+  --danger: #d95c78;
+  --warning: #b98116;
+  --warning-bg: rgba(245, 182, 66, 0.16);
+  --warning-border: rgba(245, 182, 66, 0.28);
+  --danger-bg: rgba(217, 92, 120, 0.12);
+  --danger-border: rgba(217, 92, 120, 0.24);
+  --danger-text: #9f1f45;
+  --success-bg: rgba(76, 198, 161, 0.12);
+  --shadow-glow: 0 24px 80px rgba(17, 33, 51, 0.12);
+  --overlay-backdrop: rgba(5, 10, 18, 0.78);
+  --nav-hover: rgba(20, 37, 56, 0.06);
+  --rule: rgba(20, 37, 56, 0.12);
+  --camera-top-fade: rgba(4, 10, 18, 0.16);
+  --camera-bottom-fade: rgba(4, 10, 18, 0.42);
 }
 
 @theme inline {
@@ -28,9 +163,10 @@
 }
 
 html {
+  color-scheme: light dark;
   background:
-    radial-gradient(circle at top, rgba(143, 247, 208, 0.14), transparent 30%),
-    linear-gradient(180deg, #0d1726 0%, #08111f 40%, #050a12 100%);
+    radial-gradient(circle at top, var(--app-bg-top), transparent 30%),
+    linear-gradient(180deg, var(--app-bg-mid) 0%, var(--app-bg) 40%, var(--app-bg-bottom) 100%);
 }
 
 body {
@@ -73,6 +209,27 @@ canvas {
     calc(env(safe-area-inset-bottom, 0px) + 16px);
 }
 
+.app-shell-with-nav {
+  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 108px);
+}
+
+.floating-action-bar {
+  position: fixed;
+  right: 16px;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 88px);
+  left: 16px;
+  z-index: 50;
+}
+
+@media (min-width: 768px) {
+  .floating-action-bar {
+    right: auto;
+    left: 50%;
+    width: min(100% - 32px, 28rem);
+    transform: translateX(-50%);
+  }
+}
+
 .glass-panel {
   border: 1px solid var(--border-soft);
   background: var(--surface);
@@ -82,7 +239,7 @@ canvas {
 
 .soft-card {
   border: 1px solid var(--border-soft);
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--card-soft);
   backdrop-filter: blur(18px);
 }
 
@@ -96,7 +253,7 @@ canvas {
 
 .thin-scrollbar {
   scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+  scrollbar-color: var(--border-soft) transparent;
 }
 
 .thin-scrollbar::-webkit-scrollbar {
@@ -105,7 +262,7 @@ canvas {
 
 .thin-scrollbar::-webkit-scrollbar-thumb {
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.18);
+  background: var(--border-soft);
 }
 
 .camera-grid::before {
@@ -113,8 +270,8 @@ canvas {
   inset: 0;
   border-radius: inherit;
   background-image:
-    linear-gradient(rgba(255, 255, 255, 0.07) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.07) 1px, transparent 1px);
+    linear-gradient(var(--rule) 1px, transparent 1px),
+    linear-gradient(90deg, var(--rule) 1px, transparent 1px);
   background-size: 33.33% 33.33%;
   content: "";
   pointer-events: none;
@@ -178,4 +335,45 @@ canvas {
 
 .scan-spinner {
   animation: spin-ring 1s linear infinite;
+}
+
+.secondary-button {
+  border: 1px solid var(--border-soft);
+  background: var(--card-soft);
+  color: var(--text-secondary);
+  backdrop-filter: blur(18px);
+}
+
+.secondary-button:hover {
+  background: var(--nav-hover);
+  color: var(--text-primary);
+}
+
+.field-control {
+  border: 1px solid var(--field-border);
+  background: var(--field-fill);
+  color: var(--text-primary);
+}
+
+.field-control::placeholder {
+  color: var(--text-muted);
+}
+
+.field-control:focus {
+  border-color: var(--border-strong);
+}
+
+.divider-line {
+  background: var(--rule);
+}
+
+.danger-card {
+  border: 1px solid var(--danger-border);
+  background: var(--danger-bg);
+  color: var(--danger-text);
+}
+
+.warning-card {
+  border: 1px solid var(--warning-border);
+  background: var(--warning-bg);
 }
