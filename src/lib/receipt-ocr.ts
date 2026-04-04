@@ -83,7 +83,7 @@ export async function extractReceiptDataFromImage(params: {
   originalImageBuffer?: Buffer;
   preprocessing?: ReceiptProcessingOutput["debug"]["preprocessing"];
 }) {
-  const debug = {
+  const debug: ReceiptProcessingOutput["debug"] = {
     extracted_fields: [],
     failure_stage: "none",
     handwriting_detected: false,
@@ -96,7 +96,7 @@ export async function extractReceiptDataFromImage(params: {
     printed_text_stage: emptyStageDebug(OCR_MODEL, true),
     structured_json_returned: false,
     structured_stage: emptyStageDebug(STRUCTURED_MODEL, false),
-  } satisfies ReceiptProcessingOutput["debug"];
+  };
 
   if (receiptOcrEnvError) {
     return { ok: false as const, error: receiptOcrEnvError, data: buildFailureOutput(debug, receiptOcrEnvError) };
@@ -254,7 +254,16 @@ function applyReceiptHeuristics(rawText: string, fields: StructuredReceiptFields
   return { debug: { candidate_merchant_line: merchantCandidate.line, candidate_receipt_date_line: dateCandidate.line, candidate_receipt_time_line: timeCandidate.line, candidate_total_line: totalCandidate.line, candidate_vat_line: vatCandidate.line, receipt_time: timeCandidate.time }, fields: merged };
 }
 
-function scoreFieldConfidence(rawText: string, heuristicDebug: HeuristicDebug, structuredFields: StructuredReceiptFields, merged: StructuredReceiptFields) {
+function scoreFieldConfidence(
+  rawText: string,
+  heuristicDebug: HeuristicDebug,
+  structuredFields: StructuredReceiptFields,
+  merged: StructuredReceiptFields,
+): {
+  merchant_confidence: ConfidenceLevel;
+  receipt_date_confidence: ConfidenceLevel;
+  total_amount_confidence: ConfidenceLevel;
+} {
   const merchant_confidence = !merged.merchant_name ? null : heuristicDebug.candidate_merchant_line?.toLowerCase() === merged.merchant_name.toLowerCase() && structuredFields.merchant_name ? "high" : structuredFields.merchant_name ? "medium" : "low";
   const receipt_date_confidence = !merged.receipt_date ? null : containsKeyword(heuristicDebug.candidate_receipt_date_line ?? "", ["date", "transaction date", "receipt date", "issued"]) ? "high" : structuredFields.receipt_date ? "medium" : "low";
   const totalLine = heuristicDebug.candidate_total_line ?? "";
