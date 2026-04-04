@@ -4,6 +4,7 @@ import {
   getReceiptOcrModels,
 } from "@/lib/receipt-ocr";
 import { preprocessReceiptImageForOcr } from "@/lib/receipt-image-processing";
+import { isMissingOptionalReceiptColumnError } from "@/lib/receipt-schema";
 import {
   getAuthenticatedUserFromAccessToken,
   getSupabaseAdminClient,
@@ -200,25 +201,25 @@ export async function POST(request: NextRequest, context: RouteContext) {
     receipt_id: receipt.id,
   });
 
+  const baseUpdate = {
+    merchant_name: extractionResult.data.merchant_name,
+    merchant_confidence: extractionResult.data.merchant_confidence,
+    receipt_date: extractionResult.data.receipt_date,
+    receipt_date_confidence: extractionResult.data.receipt_date_confidence,
+    total_amount: extractionResult.data.total_amount,
+    total_amount_confidence: extractionResult.data.total_amount_confidence,
+    vat_amount: extractionResult.data.vat_amount,
+    currency: extractionResult.data.currency,
+    category: extractionResult.data.category,
+    raw_ocr_text: extractionResult.data.raw_ocr_text || null,
+    parsed_ocr_json: parsedDebugJson,
+    extraction_error: extractionError,
+    status: nextStatus,
+  };
+
   const { error: updateError } = await supabase
     .from("receipts")
-    .update({
-      processed_ocr_image_path: processedUploadError ? null : processedImagePath,
-      merchant_name: extractionResult.data.merchant_name,
-      merchant_confidence: extractionResult.data.merchant_confidence,
-      receipt_date: extractionResult.data.receipt_date,
-      receipt_date_confidence: extractionResult.data.receipt_date_confidence,
-      total_amount: extractionResult.data.total_amount,
-      total_amount_confidence: extractionResult.data.total_amount_confidence,
-      vat_amount: extractionResult.data.vat_amount,
-      currency: extractionResult.data.currency,
-      category: extractionResult.data.category,
-      raw_ocr_text: extractionResult.data.raw_ocr_text || null,
-      handwritten_notes: extractionResult.data.handwritten_notes,
-      parsed_ocr_json: parsedDebugJson,
-      extraction_error: extractionError,
-      status: nextStatus,
-    })
+    .update(baseUpdate)
     .eq("id", receipt.id)
     .eq("user_id", authResult.data.id);
 
@@ -230,6 +231,20 @@ export async function POST(request: NextRequest, context: RouteContext) {
     await markReceiptFailed(supabase, receipt.id, updateError.message);
     return NextResponse.json({ error: updateError.message }, { status: 500 });
   }
+
+  await updateOptionalReceiptColumn({
+    receiptId: receipt.id,
+    supabase,
+    update: { handwritten_notes: extractionResult.data.handwritten_notes },
+    userId: authResult.data.id,
+  });
+
+  await updateOptionalReceiptColumn({
+    receiptId: receipt.id,
+    supabase,
+    update: { processed_ocr_image_path: processedUploadError ? null : processedImagePath },
+    userId: authResult.data.id,
+  });
 
   return NextResponse.json({
     ok: true,
@@ -266,4 +281,37 @@ async function markReceiptFailed(
     .from("receipts")
     .update({ extraction_error: reason, status: "failed" })
     .eq("id", receiptId);
+}
+
+async function updateOptionalReceiptColumn({
+  receiptId,
+  supabase,
+  update,
+  userId,
+}: {
+  receiptId: string;
+  supabase: NonNullable<ReturnType<typeof getSupabaseAdminClient>>;
+  update: Record<string, string | null>;
+  userId: string;
+}) {
+  const value = Object.values(update)[0];
+  if (value === undefined) {
+    return;
+  }
+
+  const { error } = await supabase
+    .from("receipts")
+    .update(update)
+    .eq("id", receiptId)
+    .eq("user_id", userId);
+
+  if (!error || isMissingOptionalReceiptColumnError(error.message)) {
+    return;
+  }
+
+  console.warn("[receipt-processing:optional-update]", {
+    receipt_id: receiptId,
+    reason: error.message,
+    update,
+  });
 }

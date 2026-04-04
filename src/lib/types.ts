@@ -14,7 +14,7 @@ export type ReceiptRow = {
   user_id: string;
   folder_id: string | null;
   image_path: string;
-  processed_ocr_image_path: string | null;
+  processed_ocr_image_path?: string | null;
   status: string;
   merchant_name: string | null;
   merchant_confidence: string | null;
@@ -26,7 +26,7 @@ export type ReceiptRow = {
   currency: string | null;
   category: string | null;
   raw_ocr_text: string | null;
-  handwritten_notes: string | null;
+  handwritten_notes?: string | null;
   parsed_ocr_json: string | null;
   extraction_error: string | null;
   created_at: string;
@@ -38,7 +38,7 @@ export type ReceiptInsert = {
   user_id: string;
   folder_id: string | null;
   image_path: string;
-  processed_ocr_image_path: string | null;
+  processed_ocr_image_path?: string | null;
   status: string;
   merchant_name: string | null;
   merchant_confidence: string | null;
@@ -50,7 +50,7 @@ export type ReceiptInsert = {
   currency: string | null;
   category: string | null;
   raw_ocr_text: string | null;
-  handwritten_notes: string | null;
+  handwritten_notes?: string | null;
   parsed_ocr_json: string | null;
   extraction_error: string | null;
 };

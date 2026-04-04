@@ -39,17 +39,14 @@ export async function DELETE(request: NextRequest) {
 
   const { data: receipts, error: listError } = await supabase
     .from("receipts")
-    .select("id, image_path, processed_ocr_image_path")
+    .select("id, image_path")
     .eq("user_id", authResult.data.id);
 
   if (listError) {
     return NextResponse.json({ error: listError.message }, { status: 500 });
   }
 
-  const imagePaths =
-    receipts
-      ?.flatMap((receipt) => [receipt.image_path, receipt.processed_ocr_image_path])
-      .filter(Boolean) ?? [];
+  const imagePaths = receipts?.map((receipt) => receipt.image_path).filter(Boolean) ?? [];
 
   if (imagePaths.length > 0) {
     const { error: storageError } = await supabase.storage

@@ -117,10 +117,10 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
 
   const { data: receipt, error: receiptError } = await supabase
     .from("receipts")
-    .select("id, image_path, processed_ocr_image_path")
+    .select("id, image_path")
     .eq("id", id)
     .eq("user_id", authResult.data.id)
-    .single<{ id: string; image_path: string; processed_ocr_image_path: string | null }>();
+    .single<{ id: string; image_path: string }>();
 
   if (receiptError || !receipt) {
     return NextResponse.json({ error: "Receipt not found." }, { status: 404 });
@@ -128,7 +128,7 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
 
   const { error: storageError } = await supabase.storage
     .from("receipts")
-    .remove([receipt.image_path, receipt.processed_ocr_image_path].filter(Boolean) as string[]);
+    .remove([receipt.image_path]);
 
   if (storageError) {
     return NextResponse.json({ error: storageError.message }, { status: 500 });
