@@ -382,18 +382,6 @@ export function ReceiptDetailClient({
     return getMissingFields(receipt);
   }, [receipt]);
 
-  const lowConfidenceFields = useMemo(() => {
-    if (!receipt) {
-      return [];
-    }
-
-    return [
-      receipt.merchant_confidence === "low" ? "merchant" : null,
-      receipt.receipt_date_confidence === "low" ? "receipt date" : null,
-      receipt.total_amount_confidence === "low" ? "total" : null,
-    ].filter(Boolean) as string[];
-  }, [receipt]);
-
   const isDirty = useMemo(() => {
     if (!receipt) {
       return false;
@@ -453,12 +441,6 @@ export function ReceiptDetailClient({
               />
             ) : null}
 
-            {lowConfidenceFields.length > 0 ? (
-              <StatusBanner
-                message={`Review ${lowConfidenceFields.join(", ")} before finishing.`}
-              />
-            ) : null}
-
             <section className="glass-panel overflow-hidden rounded-[32px]">
               {receipt.signed_image_url ? (
                 <button
@@ -503,7 +485,6 @@ export function ReceiptDetailClient({
               <div className="mt-4 grid grid-cols-2 gap-3">
                 <FieldCard
                   missing={!receipt.merchant_name && receipt.status !== "processing"}
-                  confidence={receipt.merchant_confidence}
                   label="Merchant"
                   onClick={() => merchantInputRef.current?.focus()}
                   value={
@@ -513,7 +494,6 @@ export function ReceiptDetailClient({
                 />
                 <FieldCard
                   missing={!receipt.receipt_date && receipt.status !== "processing"}
-                  confidence={receipt.receipt_date_confidence}
                   label="Receipt date"
                   onClick={() => receiptDateInputRef.current?.focus()}
                   value={
@@ -526,7 +506,6 @@ export function ReceiptDetailClient({
                 />
                 <FieldCard
                   missing={receipt.total_amount == null && receipt.status !== "processing"}
-                  confidence={receipt.total_amount_confidence}
                   label="Total"
                   onClick={() => totalInputRef.current?.focus()}
                   value={
@@ -586,13 +565,13 @@ export function ReceiptDetailClient({
                 </p>
               </div>
 
-              {receipt.handwritten_notes ? (
+              {receipt.notes ? (
                 <div className="mt-4 rounded-[24px] border border-[var(--border-soft)] bg-[var(--card-soft)] p-4">
                   <p className="text-xs uppercase tracking-[0.18em] text-[var(--text-muted)]">
-                    Handwritten notes
+                    Notes
                   </p>
                   <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-[var(--text-secondary)]">
-                    {receipt.handwritten_notes}
+                    {receipt.notes}
                   </p>
                 </div>
               ) : null}
@@ -793,7 +772,6 @@ function isPartiallyRead(receipt: ReceiptDetail) {
 }
 
 type FieldCardProps = {
-  confidence?: string | null;
   label: string;
   missing?: boolean;
   onClick?: () => void;
@@ -801,15 +779,11 @@ type FieldCardProps = {
 };
 
 function FieldCard({
-  confidence = null,
   label,
   missing = false,
   onClick,
   value,
 }: FieldCardProps) {
-  const lowConfidence = confidence === "low";
-  const mediumConfidence = confidence === "medium";
-
   return (
     <button
       type="button"
@@ -817,22 +791,11 @@ function FieldCard({
       className={`rounded-[22px] border p-4 text-left ${
         missing
           ? "warning-card"
-          : lowConfidence
-            ? "border-[var(--warning-border)] bg-[var(--warning-bg)]"
           : "border-[var(--border-soft)] bg-[var(--card-soft)]"
       }`}
     >
       <div className="flex items-center justify-between gap-2">
         <p className="text-xs uppercase tracking-[0.16em] text-[var(--text-muted)]">{label}</p>
-        {lowConfidence ? (
-          <span className="rounded-full bg-[var(--warning-bg)] px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-[var(--warning)]">
-            Review
-          </span>
-        ) : mediumConfidence ? (
-          <span className="rounded-full bg-[var(--surface-soft)] px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-[var(--text-secondary)]">
-            Check
-          </span>
-        ) : null}
       </div>
       <p className="mt-2 text-sm font-medium text-[var(--text-primary)]">{value}</p>
       <p className="mt-3 text-xs text-[var(--text-secondary)]">Tap to edit</p>

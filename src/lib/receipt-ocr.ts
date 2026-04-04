@@ -8,11 +8,13 @@ type StructuredReceiptFields = {
   vat_amount: number | null;
 };
 type ParsedReceiptPayload = StructuredReceiptFields & {
-  handwritten_notes: string | null;
-  merchant_confidence: ConfidenceLevel;
+  notes: string | null;
+  field_confidence: {
+    merchant: ConfidenceLevel;
+    receipt_date: ConfidenceLevel;
+    total_amount: ConfidenceLevel;
+  };
   raw_ocr_text: string;
-  receipt_date_confidence: ConfidenceLevel;
-  total_amount_confidence: ConfidenceLevel;
 };
 type OpenAiStageDebug = {
   assistant_text: string;
@@ -144,11 +146,13 @@ export async function extractReceiptDataFromImage(params: {
     ok: true as const,
     data: {
       ...heuristic.fields,
-      handwritten_notes: handwriting.ok ? handwriting.data : null,
-      merchant_confidence: confidence.merchant_confidence,
+      notes: handwriting.ok ? handwriting.data : null,
+      field_confidence: {
+        merchant: confidence.merchant,
+        receipt_date: confidence.receipt_date,
+        total_amount: confidence.total_amount,
+      },
       raw_ocr_text: rawText,
-      receipt_date_confidence: confidence.receipt_date_confidence,
-      total_amount_confidence: confidence.total_amount_confidence,
       debug,
       failure_reason: failureReason,
       is_partial: rawText.length > 0 && debug.extracted_fields.length < 10,
@@ -260,15 +264,15 @@ function scoreFieldConfidence(
   structuredFields: StructuredReceiptFields,
   merged: StructuredReceiptFields,
 ): {
-  merchant_confidence: ConfidenceLevel;
-  receipt_date_confidence: ConfidenceLevel;
-  total_amount_confidence: ConfidenceLevel;
+  merchant: ConfidenceLevel;
+  receipt_date: ConfidenceLevel;
+  total_amount: ConfidenceLevel;
 } {
-  const merchant_confidence = !merged.merchant_name ? null : heuristicDebug.candidate_merchant_line?.toLowerCase() === merged.merchant_name.toLowerCase() && structuredFields.merchant_name ? "high" : structuredFields.merchant_name ? "medium" : "low";
-  const receipt_date_confidence = !merged.receipt_date ? null : containsKeyword(heuristicDebug.candidate_receipt_date_line ?? "", ["date", "transaction date", "receipt date", "issued"]) ? "high" : structuredFields.receipt_date ? "medium" : "low";
+  const merchant = !merged.merchant_name ? null : heuristicDebug.candidate_merchant_line?.toLowerCase() === merged.merchant_name.toLowerCase() && structuredFields.merchant_name ? "high" : structuredFields.merchant_name ? "medium" : "low";
+  const receipt_date = !merged.receipt_date ? null : containsKeyword(heuristicDebug.candidate_receipt_date_line ?? "", ["date", "transaction date", "receipt date", "issued"]) ? "high" : structuredFields.receipt_date ? "medium" : "low";
   const totalLine = heuristicDebug.candidate_total_line ?? "";
-  const total_amount_confidence = merged.total_amount == null ? null : containsKeyword(totalLine, ["grand total", "amount paid", "balance due", "to pay"]) || (containsKeyword(totalLine, ["total"]) && !containsKeyword(totalLine, ["subtotal"])) ? "high" : structuredFields.total_amount != null && rawText.toLowerCase().includes("total") ? "medium" : "low";
-  return { merchant_confidence, receipt_date_confidence, total_amount_confidence };
+  const total_amount = merged.total_amount == null ? null : containsKeyword(totalLine, ["grand total", "amount paid", "balance due", "to pay"]) || (containsKeyword(totalLine, ["total"]) && !containsKeyword(totalLine, ["subtotal"])) ? "high" : structuredFields.total_amount != null && rawText.toLowerCase().includes("total") ? "medium" : "low";
+  return { merchant, receipt_date, total_amount };
 }
 
 function sanitizeStructuredFields(result: StructuredReceiptFields) {
@@ -318,8 +322,8 @@ function extractDateFromLine(line: string) {
   return null;
 }
 function extractTimeFromLine(line: string) { return line.match(/\b(\d{2}:\d{2}:\d{2})\b/)?.[1] ?? line.match(/\b(\d{2}:\d{2})\b/)?.[1] ?? line.match(/\b(\d{1,2}:\d{2}\s?(?:AM|PM))\b/i)?.[1] ?? null; }
-function listExtractedFields(rawText: string, fields: StructuredReceiptFields, handwrittenNotes: string | null) { const extracted: string[] = []; if (rawText) extracted.push("raw_ocr_text"); if (handwrittenNotes) extracted.push("handwritten_notes"); if (fields.merchant_name) extracted.push("merchant_name"); if (fields.receipt_date) extracted.push("receipt_date"); if (fields.total_amount != null) extracted.push("total_amount"); if (fields.vat_amount != null) extracted.push("vat_amount"); if (fields.currency) extracted.push("currency"); if (fields.category) extracted.push("category"); return extracted; }
-function buildFailureOutput(debug: ReceiptProcessingOutput["debug"], failureReason: string): ReceiptProcessingOutput { return { ...emptyStructuredFields(), handwritten_notes: null, merchant_confidence: null, raw_ocr_text: "", receipt_date_confidence: null, total_amount_confidence: null, debug, failure_reason: failureReason, is_partial: false, parsed_json_text: null, should_fail: true }; }
+function listExtractedFields(rawText: string, fields: StructuredReceiptFields, notes: string | null) { const extracted: string[] = []; if (rawText) extracted.push("raw_ocr_text"); if (notes) extracted.push("notes"); if (fields.merchant_name) extracted.push("merchant_name"); if (fields.receipt_date) extracted.push("receipt_date"); if (fields.total_amount != null) extracted.push("total_amount"); if (fields.vat_amount != null) extracted.push("vat_amount"); if (fields.currency) extracted.push("currency"); if (fields.category) extracted.push("category"); return extracted; }
+function buildFailureOutput(debug: ReceiptProcessingOutput["debug"], failureReason: string): ReceiptProcessingOutput { return { ...emptyStructuredFields(), notes: null, field_confidence: { merchant: null, receipt_date: null, total_amount: null }, raw_ocr_text: "", debug, failure_reason: failureReason, is_partial: false, parsed_json_text: null, should_fail: true }; }
 function emptyStructuredFields(): StructuredReceiptFields { return { merchant_name: null, receipt_date: null, total_amount: null, vat_amount: null, currency: null, category: null }; }
 function normalizeNullableString(value: string | null) { const trimmed = value?.trim(); return trimmed ? trimmed : null; }
 function normalizeNullableNumber(value: number | null) { return typeof value === "number" && Number.isFinite(value) ? value : null; }

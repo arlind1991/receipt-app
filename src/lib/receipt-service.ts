@@ -18,12 +18,7 @@ type SaveReceiptInput = {
   userId: string;
 };
 
-type ReceiptSelectRow = Omit<
-  ReceiptRow,
-  "handwritten_notes" | "processed_ocr_image_path"
-> & {
-  handwritten_notes?: string | null;
-  processed_ocr_image_path?: string | null;
+type ReceiptSelectRow = ReceiptRow & {
   folders: { name: string } | null;
 };
 
@@ -100,15 +95,13 @@ export async function saveReceipt({
     image_path: imagePath,
     status: "processing",
     merchant_name: null,
-    merchant_confidence: null,
     receipt_date: null,
-    receipt_date_confidence: null,
     total_amount: null,
-    total_amount_confidence: null,
     vat_amount: null,
     currency: null,
     category: null,
     raw_ocr_text: null,
+    notes: null,
     parsed_ocr_json: null,
     extraction_error: null,
   };
@@ -150,8 +143,6 @@ export async function fetchReceiptsWithUrls(
     data: receipts.map((item) => ({
       ...item,
       folder_name: item.folders?.name ?? null,
-      handwritten_notes: item.handwritten_notes ?? null,
-      processed_ocr_image_path: item.processed_ocr_image_path ?? null,
       signed_image_url: signedUrlMap[item.image_path] ?? null,
     })),
   };
@@ -204,8 +195,6 @@ export async function fetchReceiptDetail(
     data: {
       ...data,
       folder_name: data.folders?.name ?? null,
-      handwritten_notes: data.handwritten_notes ?? null,
-      processed_ocr_image_path: data.processed_ocr_image_path ?? null,
       signed_image_url: signedUrlData?.signedUrl ?? null,
     },
   };
