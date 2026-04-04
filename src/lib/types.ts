@@ -54,6 +54,22 @@ export type ReceiptListItem = ReceiptRow & {
 
 export type ReceiptDetail = ReceiptListItem;
 
+export type ReceiptProcessingQueueState =
+  | "queued"
+  | "uploading"
+  | "processing"
+  | "extracting"
+  | "needs_review";
+
+export type ReceiptProcessingQueueItem = {
+  created_at: string;
+  receipt_id: string;
+  status_text: string;
+  thumbnail_data_url: string | null;
+  user_id: string;
+  state: ReceiptProcessingQueueState;
+};
+
 export type ReceiptEditableFields = {
   currency: string | null;
   folder_id: string | null;

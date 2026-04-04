@@ -1,34 +1,21 @@
 "use client";
-/* eslint-disable @next/next/no-img-element */
 
-import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { StatusBanner } from "@/components/status-banner";
-import { getLastUsedFolderId, setLastUsedFolderId } from "@/lib/local-storage";
 import {
-  fetchFolders,
-  fetchReceiptDetail,
-  saveReceipt,
-  triggerReceiptProcessing,
-  updateReceiptFields,
-} from "@/lib/receipt-service";
+  enqueueReceiptProcessingItems,
+  getLastUsedFolderId,
+  setLastUsedFolderId,
+} from "@/lib/local-storage";
+import { fetchFolders, saveReceipt } from "@/lib/receipt-service";
 import { ensureBrowserSession, supabaseEnvError } from "@/lib/supabase/session";
-import type {
-  FolderRow,
-  ReceiptDetail,
-  ReceiptEditableFields,
-} from "@/lib/types";
+import type { ReceiptProcessingQueueItem } from "@/lib/types";
 
 const UNSORTED_FOLDER_ID = "__unsorted__";
-const PROCESSING_POLL_MS = 700;
-const FIELD_REVEAL_MS = 180;
-const POST_REVEAL_PAUSE_MS = 650;
 const DEFAULT_CAMERA_ZOOM = 1.08;
 
 type CaptureMode = "single" | "multiple" | "two-sided";
-type CaptureStage = "camera" | "processing" | "review" | "batch-complete";
-type ProcessingFieldKey = "merchant" | "amount" | "currency" | "date" | "time";
-type ProcessingFields = Record<ProcessingFieldKey, string>;
 
 type CapturedFrame = {
   blob: Blob;
@@ -42,61 +29,32 @@ type ZoomCapableMediaTrackCapabilities = MediaTrackCapabilities & {
   };
 };
 
-const emptyProcessingFields: ProcessingFields = {
-  amount: "Scanning...",
-  currency: "Scanning...",
-  date: "Scanning...",
-  merchant: "Scanning...",
-  time: "Scanning...",
-};
-
-const emptyEditValues = {
-  category: "",
-  currency: "",
-  folder_id: "",
-  merchant_name: "",
-  receipt_date: "",
-  total_amount: "",
-  vat_amount: "",
-};
-
 export function CameraCapture() {
   const router = useRouter();
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const cameraPermissionRef = useRef<PermissionStatus | null>(null);
+  const startCameraPromiseRef = useRef<Promise<void> | null>(null);
   const multipleFramesRef = useRef<CapturedFrame[]>([]);
   const twoSidedFramesRef = useRef<{ back: CapturedFrame | null; front: CapturedFrame | null }>({
     back: null,
     front: null,
   });
-  const reviewPreviewUrlRef = useRef<string | null>(null);
-  const [folders, setFolders] = useState<FolderRow[]>([]);
   const [selectedFolderId, setSelectedFolderId] = useState(UNSORTED_FOLDER_ID);
   const [isCameraReady, setIsCameraReady] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submissionLabel, setSubmissionLabel] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [mode, setMode] = useState<CaptureMode>("single");
-  const [stage, setStage] = useState<CaptureStage>("camera");
-  const [processingFields, setProcessingFields] = useState<ProcessingFields>(emptyProcessingFields);
-  const [processingLabel, setProcessingLabel] = useState("Preparing scan");
-  const [processingSubLabel, setProcessingSubLabel] = useState<string | null>(null);
-  const [reviewPreviewUrl, setReviewPreviewUrl] = useState<string | null>(null);
-  const [receipt, setReceipt] = useState<ReceiptDetail | null>(null);
-  const [isSavingEdits, setIsSavingEdits] = useState(false);
-  const [batchCompletedCount, setBatchCompletedCount] = useState(0);
   const [multipleFrames, setMultipleFrames] = useState<CapturedFrame[]>([]);
   const [twoSidedFrames, setTwoSidedFrames] = useState<{
     back: CapturedFrame | null;
     front: CapturedFrame | null;
   }>({ back: null, front: null });
-  const [editValues, setEditValues] = useState(emptyEditValues);
   const [useCssZoomFallback, setUseCssZoomFallback] = useState(false);
 
   const hasSupabase = useMemo(() => !supabaseEnvError, []);
-  const goToReceipts = useCallback(() => {
-    router.replace("/receipts");
-    router.refresh();
-  }, [router]);
   const videoScale = useCssZoomFallback ? DEFAULT_CAMERA_ZOOM : 1;
 
   useEffect(() => {
@@ -106,10 +64,6 @@ export function CameraCapture() {
   useEffect(() => {
     twoSidedFramesRef.current = twoSidedFrames;
   }, [twoSidedFrames]);
-
-  useEffect(() => {
-    reviewPreviewUrlRef.current = reviewPreviewUrl;
-  }, [reviewPreviewUrl]);
 
   useEffect(() => {
     if (!hasSupabase) {
@@ -132,7 +86,6 @@ export function CameraCapture() {
       return;
     }
 
-    setFolders(result.data);
     const lastUsedFolderId = getLastUsedFolderId();
     setSelectedFolderId(
       lastUsedFolderId && result.data.some((folder) => folder.id === lastUsedFolderId)
@@ -151,7 +104,11 @@ export function CameraCapture() {
 
     const capabilities = track.getCapabilities?.() as ZoomCapableMediaTrackCapabilities | undefined;
     const zoomCapability = capabilities?.zoom;
-    if (!zoomCapability || typeof zoomCapability.min !== "number" || typeof zoomCapability.max !== "number") {
+    if (
+      !zoomCapability ||
+      typeof zoomCapability.min !== "number" ||
+      typeof zoomCapability.max !== "number"
+    ) {
       setUseCssZoomFallback(true);
       return;
     }
@@ -170,37 +127,85 @@ export function CameraCapture() {
     }
   }, []);
 
-  const startCamera = useCallback(async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: false,
-        video: {
-          facingMode: { ideal: "environment" },
-          width: { ideal: 2160 },
-          height: { ideal: 3840 },
-        },
-      });
+  const readCameraPermissionState = useCallback(async () => {
+    if (
+      typeof navigator === "undefined" ||
+      !("permissions" in navigator) ||
+      typeof navigator.permissions.query !== "function"
+    ) {
+      return null;
+    }
 
-      streamRef.current = stream;
-      setUseCssZoomFallback(false);
-      await applyPreferredCameraZoom(stream);
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play();
+    try {
+      const permissionStatus = await navigator.permissions.query({
+        name: "camera" as PermissionName,
+      });
+      cameraPermissionRef.current = permissionStatus;
+      return permissionStatus.state;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  const startCamera = useCallback(async () => {
+    if (streamRef.current) {
+      setIsCameraReady(true);
+      return;
+    }
+
+    if (startCameraPromiseRef.current) {
+      await startCameraPromiseRef.current;
+      return;
+    }
+
+    const startPromise = (async () => {
+      const permissionState = await readCameraPermissionState();
+      if (permissionState === "denied") {
+        setErrorMessage(
+          "Camera access is blocked. Allow camera permission for this site in your browser settings.",
+        );
+        setIsCameraReady(false);
+        return;
       }
 
-      setErrorMessage(null);
-      setIsCameraReady(true);
-    } catch {
-      setErrorMessage(
-        "Camera access was blocked. Allow camera permission on your phone to capture receipts.",
-      );
-    }
-  }, [applyPreferredCameraZoom]);
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: {
+            facingMode: { ideal: "environment" },
+            width: { ideal: 2160 },
+            height: { ideal: 3840 },
+          },
+        });
+
+        streamRef.current = stream;
+        setUseCssZoomFallback(false);
+        await applyPreferredCameraZoom(stream);
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          await videoRef.current.play();
+        }
+
+        setErrorMessage(null);
+        setIsCameraReady(true);
+      } catch {
+        setErrorMessage(
+          "Camera access was blocked. Open the app over HTTPS and allow camera permission to capture receipts.",
+        );
+        setIsCameraReady(false);
+      }
+    })();
+
+    startCameraPromiseRef.current = startPromise;
+    await startPromise.finally(() => {
+      startCameraPromiseRef.current = null;
+    });
+  }, [applyPreferredCameraZoom, readCameraPermissionState]);
 
   function stopCamera() {
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
+    setIsCameraReady(false);
   }
 
   useEffect(() => {
@@ -210,9 +215,6 @@ export function CameraCapture() {
       stopCamera();
       revokeFrameUrls(multipleFramesRef.current);
       revokeFrameUrls([twoSidedFramesRef.current.front, twoSidedFramesRef.current.back]);
-      if (reviewPreviewUrlRef.current) {
-        URL.revokeObjectURL(reviewPreviewUrlRef.current);
-      }
     };
   }, [startCamera]);
 
@@ -224,24 +226,13 @@ export function CameraCapture() {
     }
   }
 
-  function resetTransientState(nextMode?: CaptureMode) {
-    revokeFrameUrls(multipleFrames);
-    revokeFrameUrls([twoSidedFrames.front, twoSidedFrames.back]);
-    if (reviewPreviewUrl) {
-      URL.revokeObjectURL(reviewPreviewUrl);
-    }
-
+  function resetCapturedState(nextMode?: CaptureMode) {
+    revokeFrameUrls(multipleFramesRef.current);
+    revokeFrameUrls([twoSidedFramesRef.current.front, twoSidedFramesRef.current.back]);
     setMultipleFrames([]);
     setTwoSidedFrames({ back: null, front: null });
-    setReviewPreviewUrl(null);
-    setReceipt(null);
-    setProcessingFields(emptyProcessingFields);
-    setProcessingLabel("Preparing scan");
-    setProcessingSubLabel(null);
-    setEditValues(emptyEditValues);
-    setBatchCompletedCount(0);
+    setSubmissionLabel(null);
     setErrorMessage(null);
-    setStage("camera");
     if (nextMode) {
       setMode(nextMode);
     }
@@ -272,21 +263,11 @@ export function CameraCapture() {
     return new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", quality));
   }, []);
 
-  function applyReceipt(nextReceipt: ReceiptDetail, previewUrl: string | null) {
-    setReceipt(nextReceipt);
-    setReviewPreviewUrl(previewUrl);
-    setEditValues({
-      category: nextReceipt.category ?? "",
-      currency: nextReceipt.currency ?? "",
-      folder_id: nextReceipt.folder_id ?? "",
-      merchant_name: nextReceipt.merchant_name ?? "",
-      receipt_date: nextReceipt.receipt_date ?? "",
-      total_amount: nextReceipt.total_amount != null ? String(nextReceipt.total_amount) : "",
-      vat_amount: nextReceipt.vat_amount != null ? String(nextReceipt.vat_amount) : "",
-    });
-  }
-
   async function handleCapture() {
+    if (isSubmitting) {
+      return;
+    }
+
     const blob = await captureFrameBlob();
     if (!blob) {
       return;
@@ -297,7 +278,7 @@ export function CameraCapture() {
     setErrorMessage(null);
 
     if (mode === "single") {
-      await processSingleFlow(frame);
+      await finalizeSingle(frame);
       return;
     }
 
@@ -306,102 +287,81 @@ export function CameraCapture() {
       return;
     }
 
-    setTwoSidedFrames((current) => {
-      if (!current.front) {
-        return { ...current, front: frame };
-      }
-      return { ...current, back: frame };
-    });
+    const nextFrames = !twoSidedFrames.front
+      ? { ...twoSidedFrames, front: frame }
+      : { ...twoSidedFrames, back: frame };
+    setTwoSidedFrames(nextFrames);
+
+    if (nextFrames.front && nextFrames.back) {
+      await finalizeTwoSided(nextFrames.front, nextFrames.back);
+    }
   }
 
-  async function processSingleFlow(frame: CapturedFrame) {
-    setStage("processing");
-    setReceipt(null);
-    setReviewPreviewUrl(frame.previewUrl);
-    await processReceiptBlob(frame.blob, {
-      previewUrl: frame.previewUrl,
-      processingTitle: "Scanning receipt",
-      processingProgress: null,
-    });
-  }
-
-  const processTwoSidedFlow = useEffectEvent(async (front: CapturedFrame, back: CapturedFrame) => {
-    setStage("processing");
-    setReceipt(null);
+  async function finalizeSingle(frame: CapturedFrame) {
+    setIsSubmitting(true);
+    setSubmissionLabel("Saving receipt");
 
     try {
-      setProcessingLabel("Combining both sides");
-      setProcessingSubLabel("Scanning front and back as one receipt");
-      const combinedBlob = await combineFramesVertically(front.blob, back.blob);
-      const combinedPreviewUrl = URL.createObjectURL(combinedBlob);
-      setReviewPreviewUrl(combinedPreviewUrl);
-      await processReceiptBlob(combinedBlob, {
-        previewUrl: combinedPreviewUrl,
-        processingTitle: "Scanning 2-sided receipt",
-        processingProgress: "Front and back captured",
-      });
-    } finally {
-      revokeFrameUrls([front, back]);
-      setTwoSidedFrames({ back: null, front: null });
-    }
-  });
-
-  useEffect(() => {
-    if (mode !== "two-sided" || !twoSidedFrames.front || !twoSidedFrames.back) {
-      return;
-    }
-
-    void processTwoSidedFlow(twoSidedFrames.front, twoSidedFrames.back);
-  }, [mode, twoSidedFrames.back, twoSidedFrames.front]);
-
-  async function handleFinishMultiple() {
-    if (multipleFrames.length === 0) {
-      return;
-    }
-
-    setStage("processing");
-    setBatchCompletedCount(0);
-
-    try {
-      for (let index = 0; index < multipleFrames.length; index += 1) {
-        const frame = multipleFrames[index];
-        if (!frame) {
-          continue;
-        }
-
-        setReviewPreviewUrl(frame.previewUrl);
-        await processReceiptBlob(frame.blob, {
-          previewUrl: frame.previewUrl,
-          processingTitle: `Processing ${index + 1} of ${multipleFrames.length}`,
-          processingProgress: `${index + 1} / ${multipleFrames.length} receipts`,
-          skipReview: true,
-        });
-        setBatchCompletedCount(index + 1);
-      }
-
-      setStage("batch-complete");
-      setProcessingLabel("All receipts processed");
-      setProcessingSubLabel(`${multipleFrames.length} receipts are ready in your gallery`);
+      await enqueueCapturedReceipts([frame.blob], [frame.previewUrl]);
     } catch (error) {
       setErrorMessage(
         error instanceof Error ? error.message : "Receipt upload failed. Please try again.",
       );
-      setStage("camera");
+      setIsSubmitting(false);
+      setSubmissionLabel(null);
+      return;
+    }
+
+    URL.revokeObjectURL(frame.previewUrl);
+  }
+
+  async function finalizeTwoSided(front: CapturedFrame, back: CapturedFrame) {
+    setIsSubmitting(true);
+    setSubmissionLabel("Saving 2-sided receipt");
+
+    try {
+      const combinedBlob = await combineFramesVertically(front.blob, back.blob);
+      await enqueueCapturedReceipts([combinedBlob], [front.previewUrl]);
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error ? error.message : "Receipt upload failed. Please try again.",
+      );
+      setIsSubmitting(false);
+      setSubmissionLabel(null);
+      return;
+    } finally {
+      revokeFrameUrls([front, back]);
+      setTwoSidedFrames({ back: null, front: null });
+    }
+  }
+
+  async function handleFinishMultiple() {
+    if (multipleFrames.length === 0 || isSubmitting) {
+      return;
+    }
+
+    setIsSubmitting(true);
+    setSubmissionLabel(`Saving ${multipleFrames.length} receipts`);
+
+    try {
+      await enqueueCapturedReceipts(
+        multipleFrames.map((frame) => frame.blob),
+        multipleFrames.map((frame) => frame.previewUrl),
+      );
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error ? error.message : "Receipt upload failed. Please try again.",
+      );
+      setIsSubmitting(false);
+      setSubmissionLabel(null);
+      return;
     } finally {
       revokeFrameUrls(multipleFrames);
       setMultipleFrames([]);
     }
   }
 
-  async function processReceiptBlob(
-    blob: Blob,
-    options: {
-      previewUrl: string;
-      processingProgress: string | null;
-      processingTitle: string;
-      skipReview?: boolean;
-    },
-  ) {
+  async function enqueueCapturedReceipts(blobs: Blob[], previewUrls: string[]) {
     if (!hasSupabase) {
       throw new Error(supabaseEnvError ?? "Supabase environment variables are missing.");
     }
@@ -417,119 +377,50 @@ export function CameraCapture() {
       setLastUsedFolderId(selectedFolderId);
     }
 
-    setProcessingFields(emptyProcessingFields);
-    setProcessingLabel("Saving receipt");
-    setProcessingSubLabel(options.processingProgress);
+    const saveResults = await Promise.allSettled(
+      blobs.map(async (blob, index) => {
+        const saveResult = await saveReceipt({
+          blob,
+          folderId,
+          userId: user.id,
+        });
+        if (!saveResult.ok) {
+          throw new Error(saveResult.error);
+        }
 
-    const saveResult = await saveReceipt({
-      blob,
-      folderId,
-      userId: user.id,
-    });
-    if (!saveResult.ok) {
-      throw new Error(saveResult.error);
-    }
-
-    const receiptId = saveResult.data.id;
-    setProcessingLabel(options.processingTitle);
-
-    const processResult = await triggerReceiptProcessing(receiptId);
-    if (!processResult.ok) {
-      throw new Error(processResult.error);
-    }
-
-    const processedReceipt = await pollForProcessedReceipt(
-      receiptId,
-      user.id,
-      options.processingProgress,
+        const thumbnailDataUrl = await createThumbnailDataUrl(blob, previewUrls[index] ?? null);
+        return {
+          created_at: new Date().toISOString(),
+          receipt_id: saveResult.data.id,
+          state: "queued",
+          status_text: "Processing",
+          thumbnail_data_url: thumbnailDataUrl,
+          user_id: user.id,
+        } satisfies ReceiptProcessingQueueItem;
+      }),
     );
-    setProcessingLabel("Populating fields");
-    await animateProcessingFields(processedReceipt);
-    setProcessingLabel("Review ready");
-    await wait(POST_REVEAL_PAUSE_MS);
 
-    if (options.skipReview) {
-      return;
-    }
-
-    applyReceipt(processedReceipt, options.previewUrl);
-    setStage("review");
-  }
-
-  async function pollForProcessedReceipt(
-    receiptId: string,
-    userId: string,
-    progressLabel: string | null,
-  ) {
-    while (true) {
-      const detail = await fetchReceiptDetail(receiptId, userId);
-      if (!detail.ok) {
-        throw new Error(detail.error);
+    const queueEntries = saveResults.reduce<ReceiptProcessingQueueItem[]>((accumulator, result) => {
+      if (result.status === "fulfilled") {
+        accumulator.push(result.value);
       }
+      return accumulator;
+    }, []);
 
-      if (detail.data.status !== "processing") {
-        return detail.data;
-      }
-
-      setProcessingLabel("Extracting receipt data");
-      setProcessingSubLabel(progressLabel);
-      await wait(PROCESSING_POLL_MS);
-    }
-  }
-
-  async function animateProcessingFields(nextReceipt: ReceiptDetail) {
-    const nextFields = buildProcessingFields(nextReceipt);
-    const order: ProcessingFieldKey[] = ["merchant", "amount", "currency", "date", "time"];
-
-    for (const key of order) {
-      await wait(FIELD_REVEAL_MS);
-      setProcessingFields((current) => ({ ...current, [key]: nextFields[key] }));
-    }
-  }
-
-  function updateEditField(field: keyof typeof editValues, value: string) {
-    setEditValues((current) => ({ ...current, [field]: value }));
-  }
-
-  async function handleDone() {
-    if (!receipt) {
-      router.replace("/receipts");
-      router.refresh();
-      return;
+    if (queueEntries.length === 0) {
+      const [firstRejected] = saveResults.filter(
+        (result): result is PromiseRejectedResult => result.status === "rejected",
+      );
+      throw firstRejected?.reason instanceof Error
+        ? firstRejected.reason
+        : new Error("Receipt upload failed. Please try again.");
     }
 
-    const isDirty = !matchesReceiptEditValues(receipt, editValues);
-    if (isDirty) {
-      setIsSavingEdits(true);
-      const payload: ReceiptEditableFields = {
-        category: editValues.category.trim() || null,
-        currency: editValues.currency.trim().toUpperCase() || null,
-        folder_id: editValues.folder_id || null,
-        merchant_name: editValues.merchant_name.trim() || null,
-        notes: null,
-        receipt_date: editValues.receipt_date || null,
-        total_amount: editValues.total_amount ? Number(editValues.total_amount) : null,
-        vat_amount: editValues.vat_amount ? Number(editValues.vat_amount) : null,
-      };
-
-      const result = await updateReceiptFields(receipt.id, payload);
-      setIsSavingEdits(false);
-      if (!result.ok) {
-        setErrorMessage(result.error);
-        return;
-      }
-    }
-
-    router.replace("/receipts");
+    enqueueReceiptProcessingItems(queueEntries);
+    stopCamera();
+    router.replace("/receipts?tab=processing");
     router.refresh();
   }
-
-  const isDirty = useMemo(() => {
-    if (!receipt) {
-      return false;
-    }
-    return !matchesReceiptEditValues(receipt, editValues);
-  }, [editValues, receipt]);
 
   const multipleCount = multipleFrames.length;
   const twoSidedPrompt = !twoSidedFrames.front ? "Capture front" : "Capture back";
@@ -537,25 +428,17 @@ export function CameraCapture() {
   return (
     <main className="relative h-[100dvh] overflow-hidden bg-black text-white">
       <section className="relative h-full w-full overflow-hidden">
-        {reviewPreviewUrl && stage !== "camera" ? (
-          <img
-            src={reviewPreviewUrl}
-            alt="Receipt preview"
-            className="h-full w-full object-cover"
-          />
-        ) : (
-          <video
-            ref={videoRef}
-            autoPlay
-            playsInline
-            muted
-            className="h-full w-full object-cover"
-            style={{
-              transform: `scale(${videoScale})`,
-              transformOrigin: "center center",
-            }}
-          />
-        )}
+        <video
+          ref={videoRef}
+          autoPlay
+          playsInline
+          muted
+          className="h-full w-full object-cover"
+          style={{
+            transform: `scale(${videoScale})`,
+            transformOrigin: "center center",
+          }}
+        />
 
         <div className="pointer-events-none absolute inset-0 z-10 bg-[linear-gradient(180deg,var(--camera-top-fade),transparent_22%,transparent_68%,var(--camera-bottom-fade))]" />
 
@@ -563,12 +446,13 @@ export function CameraCapture() {
           <button
             type="button"
             aria-label="Back to receipts"
-            onClick={goToReceipts}
+            onClick={() => {
+              stopCamera();
+              router.replace("/receipts");
+              router.refresh();
+            }}
             className="inline-flex min-h-10 items-center text-[1rem] font-medium tracking-[-0.01em] text-white/92 transition hover:text-white"
           >
-            <span aria-hidden="true" className="inline-block w-0 overflow-hidden text-transparent">
-              ←
-            </span>
             <span aria-hidden="true" className="mr-1 text-[1.3rem] leading-none">&lsaquo;</span>
             Receipts
           </button>
@@ -578,74 +462,46 @@ export function CameraCapture() {
           <ModeSelector
             activeMode={mode}
             onChangeMode={(nextMode) => {
-              if (nextMode === mode) {
+              if (nextMode === mode || isSubmitting) {
                 return;
               }
-              resetTransientState(nextMode);
+              resetCapturedState(nextMode);
             }}
           />
         </div>
 
-        {stage === "processing" ? (
-          <ProcessingOverlay
-            fields={processingFields}
-            imageUrl={reviewPreviewUrl}
-            label={processingLabel}
-            progress={processingSubLabel}
-          />
+        {submissionLabel ? (
+          <div className="absolute inset-x-0 bottom-[calc(env(safe-area-inset-bottom,0px)+138px)] z-20 flex justify-center px-6">
+            <div className="rounded-full bg-black/32 px-4 py-2 text-sm font-medium text-white/86 backdrop-blur-md">
+              {submissionLabel}
+            </div>
+          </div>
         ) : null}
 
-        {stage === "review" && receipt ? (
-          <InlineReviewPanel
-            editValues={editValues}
-            errorMessage={errorMessage}
-            folders={folders}
-            isDirty={isDirty}
-            isSavingEdits={isSavingEdits}
-            notes={receipt.notes}
-            onChangeField={updateEditField}
-            onDone={() => void handleDone()}
-            onRetake={() => resetTransientState()}
-            previewUrl={reviewPreviewUrl}
-          />
-        ) : null}
-
-        {stage === "batch-complete" ? (
-          <BatchCompleteOverlay
-            count={batchCompletedCount}
-            onDone={() => {
-              router.replace("/receipts");
-              router.refresh();
-            }}
-          />
-        ) : null}
-
-        {errorMessage && stage !== "review" ? (
+        {errorMessage ? (
           <div className="absolute right-4 bottom-[calc(env(safe-area-inset-bottom,0px)+124px)] left-4 z-30">
             <StatusBanner tone="error" message={errorMessage} />
           </div>
         ) : null}
 
-        {stage === "camera" ? (
-          <CameraControls
-            mode={mode}
-            multipleCount={multipleCount}
-            onCapture={() => void handleCapture()}
-            onFinishMultiple={() => void handleFinishMultiple()}
-            onRemoveLast={() => {
-              setMultipleFrames((current) => {
-                const last = current[current.length - 1];
-                if (last?.previewUrl) {
-                  URL.revokeObjectURL(last.previewUrl);
-                }
-                return current.slice(0, -1);
-              });
-            }}
-            shutterLabel={mode === "two-sided" ? twoSidedPrompt : null}
-            twoSidedCount={(twoSidedFrames.front ? 1 : 0) + (twoSidedFrames.back ? 1 : 0)}
-            disabled={!isCameraReady}
-          />
-        ) : null}
+        <CameraControls
+          mode={mode}
+          multipleCount={multipleCount}
+          onCapture={() => void handleCapture()}
+          onFinishMultiple={() => void handleFinishMultiple()}
+          onRemoveLast={() => {
+            setMultipleFrames((current) => {
+              const last = current[current.length - 1];
+              if (last?.previewUrl) {
+                URL.revokeObjectURL(last.previewUrl);
+              }
+              return current.slice(0, -1);
+            });
+          }}
+          shutterLabel={mode === "two-sided" ? twoSidedPrompt : null}
+          twoSidedCount={(twoSidedFrames.front ? 1 : 0) + (twoSidedFrames.back ? 1 : 0)}
+          disabled={!isCameraReady || isSubmitting}
+        />
       </section>
 
       <canvas ref={canvasRef} className="hidden" />
@@ -668,26 +524,26 @@ function ModeSelector({
 
   return (
     <div className="flex items-center justify-center gap-6">
-        {modes.map((mode) => (
-          <button
-            key={mode.value}
-            type="button"
-            onClick={() => onChangeMode(mode.value)}
-            className={`relative pb-1 text-sm tracking-[0.02em] transition ${
-              activeMode === mode.value
-                ? "font-semibold text-white"
-                : "font-medium text-white/48 hover:text-white/72"
+      {modes.map((mode) => (
+        <button
+          key={mode.value}
+          type="button"
+          onClick={() => onChangeMode(mode.value)}
+          className={`relative pb-1 text-sm tracking-[0.02em] transition ${
+            activeMode === mode.value
+              ? "font-semibold text-white"
+              : "font-medium text-white/48 hover:text-white/72"
+          }`}
+        >
+          {mode.label}
+          <span
+            aria-hidden="true"
+            className={`absolute inset-x-0 -bottom-[1px] mx-auto h-px w-5 bg-white transition ${
+              activeMode === mode.value ? "opacity-80" : "opacity-0"
             }`}
-          >
-            {mode.label}
-            <span
-              aria-hidden="true"
-              className={`absolute inset-x-0 -bottom-[1px] mx-auto h-px w-5 bg-white transition ${
-                activeMode === mode.value ? "opacity-80" : "opacity-0"
-              }`}
-            />
-          </button>
-        ))}
+          />
+        </button>
+      ))}
     </div>
   );
 }
@@ -727,12 +583,16 @@ function CameraControls({
       ) : null}
 
       <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 px-6 pb-[calc(env(safe-area-inset-bottom,0px)+28px)]">
-        <div className={`pointer-events-auto mx-auto flex max-w-md items-center ${showMultipleControls ? "justify-between" : "justify-center"}`}>
+        <div
+          className={`pointer-events-auto mx-auto flex max-w-md items-center ${
+            showMultipleControls ? "justify-between" : "justify-center"
+          }`}
+        >
           {showMultipleControls ? (
             <button
               type="button"
               onClick={onRemoveLast}
-              disabled={!canRemoveLast}
+              disabled={!canRemoveLast || disabled}
               className="flex h-14 w-14 items-center justify-center rounded-full border border-white/14 bg-black/30 text-2xl text-white backdrop-blur-md disabled:opacity-30"
             >
               ×
@@ -764,7 +624,7 @@ function CameraControls({
             <button
               type="button"
               onClick={onFinishMultiple}
-              disabled={!canFinishMultiple}
+              disabled={!canFinishMultiple || disabled}
               className="flex h-14 w-14 items-center justify-center rounded-full border border-white/14 bg-black/30 text-xl text-white backdrop-blur-md disabled:opacity-30"
             >
               ✓
@@ -776,288 +636,8 @@ function CameraControls({
   );
 }
 
-function ProcessingOverlay({
-  fields,
-  imageUrl,
-  label,
-  progress,
-}: {
-  fields: ProcessingFields;
-  imageUrl: string | null;
-  label: string;
-  progress: string | null;
-}) {
-  return (
-    <div className="absolute inset-0 z-30 bg-[rgba(3,8,16,0.42)]">
-      <div className="absolute inset-x-5 top-[calc(env(safe-area-inset-top,0px)+74px)] bottom-[calc(env(safe-area-inset-bottom,0px)+30px)] flex flex-col justify-center gap-5">
-        <div className="relative overflow-hidden rounded-[34px] border border-[#5ff0a7]/24 bg-[rgba(4,10,18,0.8)] shadow-[0_26px_70px_rgba(0,0,0,0.34)]">
-          {imageUrl ? (
-            <img
-              src={imageUrl}
-              alt="Captured receipt"
-              className="aspect-[4/5] w-full object-contain bg-[rgba(8,16,28,0.95)]"
-            />
-          ) : (
-            <div className="aspect-[4/5] w-full bg-[rgba(8,16,28,0.95)]" />
-          )}
-          <div className="scan-sweep absolute inset-4 rounded-[26px] border border-[#5ff0a7]/30" />
-        </div>
-
-        <div className="rounded-[30px] border border-white/12 bg-[rgba(4,10,18,0.8)] p-5 backdrop-blur-xl">
-          <p className="text-xs uppercase tracking-[0.18em] text-[#5ff0a7]">Scanning</p>
-          <p className="mt-2 text-lg font-semibold text-white">{label}</p>
-          {progress ? <p className="mt-1 text-sm text-white/64">{progress}</p> : null}
-          <div className="mt-4 grid grid-cols-2 gap-3">
-            <ProcessingField label="Merchant" value={fields.merchant} />
-            <ProcessingField label="Amount" value={fields.amount} />
-            <ProcessingField label="Currency" value={fields.currency} />
-            <ProcessingField label="Date" value={fields.date} />
-            <ProcessingField label="Time" value={fields.time} />
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function InlineReviewPanel({
-  editValues,
-  errorMessage,
-  folders,
-  isDirty,
-  isSavingEdits,
-  notes,
-  onChangeField,
-  onDone,
-  onRetake,
-  previewUrl,
-}: {
-  editValues: typeof emptyEditValues;
-  errorMessage: string | null;
-  folders: FolderRow[];
-  isDirty: boolean;
-  isSavingEdits: boolean;
-  notes: string | null;
-  onChangeField: (field: keyof typeof emptyEditValues, value: string) => void;
-  onDone: () => void;
-  onRetake: () => void;
-  previewUrl: string | null;
-}) {
-  return (
-    <div className="absolute inset-0 z-30 bg-[rgba(3,8,16,0.24)]">
-      {previewUrl ? (
-        <div className="absolute inset-x-5 top-[calc(env(safe-area-inset-top,0px)+86px)] z-10 overflow-hidden rounded-[28px] border border-white/10 shadow-[0_24px_70px_rgba(0,0,0,0.3)]">
-          <img src={previewUrl} alt="Captured receipt" className="h-40 w-full object-cover" />
-        </div>
-      ) : null}
-
-      <div className="absolute inset-x-0 bottom-0 rounded-t-[34px] border-t border-white/12 bg-[rgba(4,10,18,0.84)] px-5 pt-5 pb-[calc(env(safe-area-inset-bottom,0px)+22px)] backdrop-blur-xl">
-        <div className="mx-auto mb-4 h-1.5 w-14 rounded-full bg-white/18" />
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <p className="text-xs uppercase tracking-[0.18em] text-[#5ff0a7]">Scan Complete</p>
-            <p className="mt-2 text-xl font-semibold text-white">Check and finish</p>
-          </div>
-          <button
-            type="button"
-            onClick={onRetake}
-            className="rounded-full border border-white/14 bg-white/8 px-4 py-2 text-sm font-medium text-white"
-          >
-            Retake
-          </button>
-        </div>
-
-        {errorMessage ? (
-          <div className="mt-4">
-            <StatusBanner tone="error" message={errorMessage} />
-          </div>
-        ) : null}
-
-        <div className="mt-4 max-h-[48dvh] space-y-3 overflow-y-auto pr-1 thin-scrollbar">
-          <InlineField
-            label="Merchant"
-            value={editValues.merchant_name}
-            onChange={(value) => onChangeField("merchant_name", value)}
-          />
-          <div className="grid grid-cols-2 gap-3">
-            <InlineField
-              label="Date"
-              type="date"
-              value={editValues.receipt_date}
-              onChange={(value) => onChangeField("receipt_date", value)}
-            />
-            <InlineField
-              label="Currency"
-              value={editValues.currency}
-              onChange={(value) => onChangeField("currency", value.toUpperCase().slice(0, 3))}
-            />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <InlineField
-              label="Total"
-              type="number"
-              step="0.01"
-              value={editValues.total_amount}
-              onChange={(value) => onChangeField("total_amount", value)}
-            />
-            <InlineField
-              label="VAT"
-              type="number"
-              step="0.01"
-              value={editValues.vat_amount}
-              onChange={(value) => onChangeField("vat_amount", value)}
-            />
-          </div>
-          <InlineField
-            label="Category"
-            value={editValues.category}
-            onChange={(value) => onChangeField("category", value)}
-          />
-          <label className="block">
-            <span className="mb-2 block text-sm text-white/74">Folder</span>
-            <select
-              value={editValues.folder_id}
-              onChange={(event) => onChangeField("folder_id", event.target.value)}
-              className="w-full rounded-2xl border border-white/12 bg-white/8 px-4 py-3 text-sm text-white outline-none"
-            >
-              <option value="">Unsorted</option>
-              {folders.map((folder) => (
-                <option key={folder.id} value={folder.id}>
-                  {folder.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          {notes ? (
-            <div className="rounded-[22px] border border-white/10 bg-white/6 p-4">
-              <p className="text-xs uppercase tracking-[0.16em] text-white/56">Notes</p>
-              <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-white/78">{notes}</p>
-            </div>
-          ) : null}
-        </div>
-
-        <button
-          type="button"
-          onClick={onDone}
-          disabled={isSavingEdits}
-          className="mt-5 w-full rounded-full bg-[var(--accent)] px-5 py-4 text-sm font-semibold text-[var(--text-on-accent)] transition hover:bg-[var(--accent-strong)] disabled:opacity-60"
-        >
-          {isSavingEdits ? "Saving..." : isDirty ? "Save and done" : "Done"}
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function BatchCompleteOverlay({
-  count,
-  onDone,
-}: {
-  count: number;
-  onDone: () => void;
-}) {
-  return (
-    <div className="absolute inset-0 z-30 flex items-center justify-center bg-[rgba(3,8,16,0.54)] px-5">
-      <div className="w-full max-w-sm rounded-[32px] border border-white/12 bg-[rgba(4,10,18,0.84)] p-6 text-center backdrop-blur-xl">
-        <p className="text-xs uppercase tracking-[0.18em] text-[#5ff0a7]">Finished</p>
-        <p className="mt-3 text-2xl font-semibold text-white">{count} receipts scanned</p>
-        <p className="mt-2 text-sm leading-6 text-white/68">
-          Everything was saved to your gallery. You can review or edit any receipt there.
-        </p>
-        <button
-          type="button"
-          onClick={onDone}
-          className="mt-5 w-full rounded-full bg-[var(--accent)] px-5 py-4 text-sm font-semibold text-[var(--text-on-accent)]"
-        >
-          Done
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function InlineField({
-  label,
-  onChange,
-  step,
-  type = "text",
-  value,
-}: {
-  label: string;
-  onChange: (value: string) => void;
-  step?: string;
-  type?: string;
-  value: string;
-}) {
-  return (
-    <label className="block">
-      <span className="mb-2 block text-sm text-white/74">{label}</span>
-      <input
-        type={type}
-        step={step}
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        className="w-full rounded-2xl border border-white/12 bg-white/8 px-4 py-3 text-sm text-white outline-none"
-      />
-    </label>
-  );
-}
-
-function ProcessingField({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-[20px] border border-white/10 bg-white/6 p-3">
-      <p className="text-[11px] uppercase tracking-[0.16em] text-white/52">{label}</p>
-      <p className="mt-2 truncate text-sm font-medium text-white">{value}</p>
-    </div>
-  );
-}
-
-function buildProcessingFields(receipt: ReceiptDetail): ProcessingFields {
-  const receiptTime = parseReceiptTime(receipt.parsed_ocr_json);
-  return {
-    amount: receipt.total_amount != null ? `${receipt.total_amount.toFixed(2)}` : "Not found",
-    currency: receipt.currency ?? "Not found",
-    date: receipt.receipt_date ?? "Not found",
-    merchant: receipt.merchant_name ?? "Not found",
-    time: receiptTime ?? "Not found",
-  };
-}
-
-function parseReceiptTime(parsedJson: string | null) {
-  if (!parsedJson) {
-    return null;
-  }
-
-  try {
-    const parsed = JSON.parse(parsedJson) as {
-      heuristic_debug?: { receipt_time?: string | null };
-    };
-    return parsed.heuristic_debug?.receipt_time ?? null;
-  } catch {
-    return null;
-  }
-}
-
-function matchesReceiptEditValues(
-  receipt: ReceiptDetail,
-  editValues: typeof emptyEditValues,
-) {
-  return (
-    (receipt.category ?? "") === editValues.category &&
-    (receipt.currency ?? "") === editValues.currency &&
-    (receipt.folder_id ?? "") === editValues.folder_id &&
-    (receipt.merchant_name ?? "") === editValues.merchant_name &&
-    (receipt.receipt_date ?? "") === editValues.receipt_date &&
-    (receipt.total_amount != null ? String(receipt.total_amount) : "") === editValues.total_amount &&
-    (receipt.vat_amount != null ? String(receipt.vat_amount) : "") === editValues.vat_amount
-  );
-}
-
 async function combineFramesVertically(front: Blob, back: Blob) {
-  const [frontImage, backImage] = await Promise.all([
-    loadImageFromBlob(front),
-    loadImageFromBlob(back),
-  ]);
+  const [frontImage, backImage] = await Promise.all([loadImageFromBlob(front), loadImageFromBlob(back)]);
   const width = Math.max(frontImage.width, backImage.width);
   const scaleFront = width / frontImage.width;
   const scaleBack = width / backImage.width;
@@ -1085,6 +665,26 @@ async function combineFramesVertically(front: Blob, back: Blob) {
   });
 }
 
+async function createThumbnailDataUrl(blob: Blob, fallbackPreviewUrl: string | null) {
+  try {
+    const image = await loadImageFromBlob(blob);
+    const maxSize = 220;
+    const scale = Math.min(1, maxSize / Math.max(image.width, image.height));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(image.width * scale));
+    canvas.height = Math.max(1, Math.round(image.height * scale));
+    const context = canvas.getContext("2d");
+    if (!context) {
+      return fallbackPreviewUrl;
+    }
+
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL("image/jpeg", 0.72);
+  } catch {
+    return fallbackPreviewUrl;
+  }
+}
+
 function loadImageFromBlob(blob: Blob) {
   return new Promise<HTMLImageElement>((resolve, reject) => {
     const objectUrl = URL.createObjectURL(blob);
@@ -1099,8 +699,4 @@ function loadImageFromBlob(blob: Blob) {
     };
     image.src = objectUrl;
   });
-}
-
-function wait(ms: number) {
-  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
