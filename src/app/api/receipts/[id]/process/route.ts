@@ -3,6 +3,7 @@ import {
   extractReceiptDataFromImage,
   getReceiptOcrModels,
 } from "@/lib/receipt-ocr";
+import { preprocessReceiptImageForOcr } from "@/lib/receipt-image-processing";
 import {
   getAuthenticatedUserFromAccessToken,
   getSupabaseAdminClient,
@@ -56,10 +57,10 @@ export async function POST(request: NextRequest, context: RouteContext) {
     return NextResponse.json({ ok: true, status: "done" });
   }
 
-  const { ocrModel, structuredModel } = getReceiptOcrModels();
+  const { handwritingModel, ocrModel, structuredModel } = getReceiptOcrModels();
   console.info("[receipt-processing:start]", {
     image_path: receipt.image_path,
-    models: { ocrModel, structuredModel },
+    models: { handwritingModel, ocrModel, structuredModel },
     receipt_id: receipt.id,
   });
 
@@ -88,10 +89,41 @@ export async function POST(request: NextRequest, context: RouteContext) {
     receipt_id: receipt.id,
   });
 
+  const originalImageBuffer = Buffer.from(arrayBuffer);
+  const originalContentType = image.type || "image/jpeg";
+  const preprocessing = await preprocessReceiptImageForOcr({
+    contentType: originalContentType,
+    imageBuffer: originalImageBuffer,
+  });
+
+  if (preprocessing.debug.detected_receipt_count > 1) {
+    const reason = "Multiple receipts detected in one image. Scan each receipt separately.";
+    await markReceiptFailed(supabase, receipt.id, reason);
+    return NextResponse.json({ error: reason }, { status: 409 });
+  }
+
+  const processedImagePath = buildProcessedReceiptImagePath(receipt.image_path);
+  const { error: processedUploadError } = await supabase.storage
+    .from("receipts")
+    .upload(processedImagePath, preprocessing.ocrBuffer, {
+      contentType: preprocessing.contentType,
+      upsert: true,
+    });
+
+  if (processedUploadError) {
+    console.warn("[receipt-processing:processed-image]", {
+      receipt_id: receipt.id,
+      reason: processedUploadError.message,
+    });
+  }
+
   const extractionResult = await extractReceiptDataFromImage({
-    contentType: image.type || "image/jpeg",
-    imageBuffer: Buffer.from(arrayBuffer),
+    contentType: preprocessing.contentType,
+    imageBuffer: preprocessing.ocrBuffer,
     imageDownloadSucceeded: true,
+    originalContentType,
+    originalImageBuffer,
+    preprocessing: preprocessing.debug,
   });
 
   if (!extractionResult.ok) {
@@ -135,8 +167,11 @@ export async function POST(request: NextRequest, context: RouteContext) {
   const parsedDebugJson = JSON.stringify(
     {
       extracted_fields: extractionResult.data.debug.extracted_fields,
+      handwriting_notes: extractionResult.data.handwritten_notes,
       heuristic_debug: extractionResult.data.debug.heuristic_debug,
+      handwriting_stage: extractionResult.data.debug.handwriting_stage,
       ocr_stage: extractionResult.data.debug.ocr_stage,
+      preprocessing: extractionResult.data.debug.preprocessing,
       structured_stage: extractionResult.data.debug.structured_stage,
       structured_text: extractionResult.data.parsed_json_text,
     },
@@ -150,10 +185,14 @@ export async function POST(request: NextRequest, context: RouteContext) {
     final_fields: {
       category: extractionResult.data.category,
       currency: extractionResult.data.currency,
+      handwritten_notes: extractionResult.data.handwritten_notes,
+      merchant_confidence: extractionResult.data.merchant_confidence,
       merchant_name: extractionResult.data.merchant_name,
       receipt_date: extractionResult.data.receipt_date,
+      receipt_date_confidence: extractionResult.data.receipt_date_confidence,
       receipt_time: extractionResult.data.debug.heuristic_debug.receipt_time,
       total_amount: extractionResult.data.total_amount,
+      total_amount_confidence: extractionResult.data.total_amount_confidence,
       vat_amount: extractionResult.data.vat_amount,
     },
     final_status: nextStatus,
@@ -164,13 +203,18 @@ export async function POST(request: NextRequest, context: RouteContext) {
   const { error: updateError } = await supabase
     .from("receipts")
     .update({
+      processed_ocr_image_path: processedUploadError ? null : processedImagePath,
       merchant_name: extractionResult.data.merchant_name,
+      merchant_confidence: extractionResult.data.merchant_confidence,
       receipt_date: extractionResult.data.receipt_date,
+      receipt_date_confidence: extractionResult.data.receipt_date_confidence,
       total_amount: extractionResult.data.total_amount,
+      total_amount_confidence: extractionResult.data.total_amount_confidence,
       vat_amount: extractionResult.data.vat_amount,
       currency: extractionResult.data.currency,
       category: extractionResult.data.category,
       raw_ocr_text: extractionResult.data.raw_ocr_text || null,
+      handwritten_notes: extractionResult.data.handwritten_notes,
       parsed_ocr_json: parsedDebugJson,
       extraction_error: extractionError,
       status: nextStatus,
@@ -203,6 +247,10 @@ export async function POST(request: NextRequest, context: RouteContext) {
     partial: extractionResult.data.is_partial,
     status: nextStatus,
   });
+}
+
+function buildProcessedReceiptImagePath(imagePath: string) {
+  return imagePath.replace(/receipt-/, "ocr-processed-");
 }
 
 async function markReceiptFailed(

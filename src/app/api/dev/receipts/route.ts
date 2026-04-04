@@ -39,7 +39,7 @@ export async function DELETE(request: NextRequest) {
 
   const { data: receipts, error: listError } = await supabase
     .from("receipts")
-    .select("id, image_path")
+    .select("id, image_path, processed_ocr_image_path")
     .eq("user_id", authResult.data.id);
 
   if (listError) {
@@ -47,7 +47,9 @@ export async function DELETE(request: NextRequest) {
   }
 
   const imagePaths =
-    receipts?.map((receipt) => receipt.image_path).filter(Boolean) ?? [];
+    receipts
+      ?.flatMap((receipt) => [receipt.image_path, receipt.processed_ocr_image_path])
+      .filter(Boolean) ?? [];
 
   if (imagePaths.length > 0) {
     const { error: storageError } = await supabase.storage

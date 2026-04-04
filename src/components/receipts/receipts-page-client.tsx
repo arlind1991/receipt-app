@@ -200,6 +200,7 @@ export function ReceiptsPageClient() {
             <div className="grid grid-cols-2 gap-2">
               <button
                 type="button"
+                aria-pressed={viewMode === "gallery"}
                 onClick={() => handleViewModeChange("gallery")}
                 className={`rounded-full px-3 py-2 text-sm font-medium transition ${
                   viewMode === "gallery"
@@ -211,6 +212,7 @@ export function ReceiptsPageClient() {
               </button>
               <button
                 type="button"
+                aria-pressed={viewMode === "list"}
                 onClick={() => handleViewModeChange("list")}
                 className={`rounded-full px-3 py-2 text-sm font-medium transition ${
                   viewMode === "list"
@@ -340,7 +342,7 @@ export function ReceiptsPageClient() {
 
           {sections.map((section) => (
             <ReceiptSectionBlock
-              key={section.key}
+              key={`${viewMode}-${section.key}`}
               section={section}
               viewMode={viewMode}
             />
@@ -372,13 +374,13 @@ function ReceiptSectionBlock({
       </div>
 
       {viewMode === "gallery" ? (
-        <div className="grid grid-cols-3 gap-3">
+        <div key="gallery" className="grid grid-cols-2 gap-3 sm:grid-cols-3">
           {section.items.map((item) => (
             <GalleryReceiptCard key={item.id} item={item} />
           ))}
         </div>
       ) : (
-        <div className="grid gap-3">
+        <div key="list" className="grid gap-3">
           {section.items.map((item) => (
             <ListReceiptCard key={item.id} item={item} />
           ))}
@@ -392,9 +394,9 @@ function GalleryReceiptCard({ item }: { item: ReceiptListItem }) {
   return (
     <Link
       href={`/receipts/${item.id}`}
-      className="glass-panel overflow-hidden rounded-[24px] transition hover:-translate-y-0.5"
+      className="glass-panel overflow-hidden rounded-[22px] transition hover:-translate-y-0.5"
     >
-      <div className="aspect-[0.78] overflow-hidden bg-[var(--surface-soft)]">
+      <div className="relative aspect-[0.92] overflow-hidden bg-[var(--surface-soft)]">
         {item.signed_image_url ? (
           <img
             src={item.signed_image_url}
@@ -406,25 +408,28 @@ function GalleryReceiptCard({ item }: { item: ReceiptListItem }) {
             No image
           </div>
         )}
-      </div>
-
-      <div className="space-y-2 px-3 py-3">
-        <div className="flex items-start justify-between gap-2">
-          <p className="min-w-0 truncate text-sm font-semibold text-[var(--text-primary)]">
-            {renderMerchantLabel(item)}
-          </p>
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-[var(--overlay-backdrop)] via-[rgba(5,10,18,0.22)] to-transparent" />
+        <div className="absolute top-2 right-2">
           <StatusPill compact status={resolveDisplayStatus(item)} />
         </div>
-        <p className="truncate text-xs text-[var(--text-secondary)]">
-          {item.total_amount != null
-            ? formatCurrency(item.total_amount, normalizeCurrency(item.currency))
-            : item.status === "processing"
-              ? "Extracting..."
-              : "Unknown"}
+      </div>
+
+      <div className="space-y-1.5 px-3 py-2.5">
+        <p className="truncate text-sm font-semibold text-[var(--text-primary)]">
+          {renderMerchantLabel(item)}
         </p>
-        <p className="text-xs text-[var(--text-muted)]">
-          {formatReceiptDate(item.receipt_date, item.created_at)}
-        </p>
+        <div className="flex items-center justify-between gap-2">
+          <p className="truncate text-xs text-[var(--text-secondary)]">
+            {formatReceiptDate(item.receipt_date, item.created_at)}
+          </p>
+          <p className="truncate text-xs font-medium text-[var(--accent-strong)]">
+            {item.total_amount != null
+              ? formatCurrency(item.total_amount, normalizeCurrency(item.currency))
+              : item.status === "processing"
+                ? "Extracting..."
+                : "Unknown"}
+          </p>
+        </div>
       </div>
     </Link>
   );

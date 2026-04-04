@@ -391,25 +391,21 @@ export function CameraCapture() {
 
       {stage === "camera" ? (
         <section className="floating-action-bar">
-          <div className="glass-panel rounded-[30px] px-4 py-3 shadow-[0_20px_60px_rgba(2,9,17,0.5)]">
-            <div className="flex flex-col items-center gap-2 text-center">
-              <button
-                type="button"
-                aria-label="Capture receipt"
-                onClick={() => void handleCapture()}
-                disabled={!isCameraReady}
-                className="capture-ring shrink-0 flex h-[5.75rem] w-[5.75rem] items-center justify-center rounded-full border border-[var(--border-soft)] bg-[linear-gradient(180deg,var(--surface-soft),transparent)] p-2 shadow-[0_16px_40px_rgba(0,0,0,0.18)] disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                <span className="h-[4.15rem] w-[4.15rem] rounded-full bg-[var(--accent)] shadow-[0_0_40px_rgba(143,247,208,0.55)]" />
-              </button>
-              <p className="text-xs text-[var(--text-secondary)]">
-                {selectedFolderId !== UNSORTED_FOLDER_ID
-                  ? `Saving into ${folders.find((folder) => folder.id === selectedFolderId)?.name ?? "your last folder"}`
-                  : isCameraReady
-                    ? "Ready to capture"
-                    : "Preparing capture"}
-              </p>
-            </div>
+          <div className="flex flex-col items-center gap-2 text-center">
+            <button
+              type="button"
+              aria-label="Capture receipt"
+              onClick={() => void handleCapture()}
+              disabled={!isCameraReady}
+              className="capture-ring shrink-0 flex h-[5.75rem] w-[5.75rem] items-center justify-center rounded-full border border-white/35 bg-white/14 p-2 shadow-[0_18px_48px_rgba(0,0,0,0.28)] backdrop-blur-md disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <span className="h-[4.15rem] w-[4.15rem] rounded-full bg-white shadow-[0_0_40px_rgba(255,255,255,0.35)]" />
+            </button>
+            {selectedFolderId !== UNSORTED_FOLDER_ID ? (
+              <span className="rounded-full bg-[var(--overlay-backdrop)] px-3 py-1 text-[11px] text-white/78 backdrop-blur-md">
+                {folders.find((folder) => folder.id === selectedFolderId)?.name ?? "Selected folder"}
+              </span>
+            ) : null}
           </div>
         </section>
       ) : null}

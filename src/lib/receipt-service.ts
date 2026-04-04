@@ -92,14 +92,19 @@ export async function saveReceipt({
     user_id: userId,
     folder_id: folderId,
     image_path: imagePath,
+    processed_ocr_image_path: null,
     status: "processing",
     merchant_name: null,
+    merchant_confidence: null,
     receipt_date: null,
+    receipt_date_confidence: null,
     total_amount: null,
+    total_amount_confidence: null,
     vat_amount: null,
     currency: null,
     category: null,
     raw_ocr_text: null,
+    handwritten_notes: null,
     parsed_ocr_json: null,
     extraction_error: null,
   };
@@ -125,7 +130,7 @@ export async function fetchReceiptsWithUrls(
   const { data, error } = await supabase
     .from("receipts")
     .select(
-      "id, user_id, folder_id, image_path, status, merchant_name, receipt_date, total_amount, vat_amount, currency, category, raw_ocr_text, parsed_ocr_json, extraction_error, created_at, updated_at, folders(name)",
+      "id, user_id, folder_id, image_path, processed_ocr_image_path, status, merchant_name, merchant_confidence, receipt_date, receipt_date_confidence, total_amount, total_amount_confidence, vat_amount, currency, category, raw_ocr_text, handwritten_notes, parsed_ocr_json, extraction_error, created_at, updated_at, folders(name)",
     )
     .eq("user_id", userId)
     .order("created_at", { ascending: false })
@@ -178,7 +183,7 @@ export async function fetchReceiptDetail(
   const { data, error } = await supabase
     .from("receipts")
     .select(
-      "id, user_id, folder_id, image_path, status, merchant_name, receipt_date, total_amount, vat_amount, currency, category, raw_ocr_text, parsed_ocr_json, extraction_error, created_at, updated_at, folders(name)",
+      "id, user_id, folder_id, image_path, processed_ocr_image_path, status, merchant_name, merchant_confidence, receipt_date, receipt_date_confidence, total_amount, total_amount_confidence, vat_amount, currency, category, raw_ocr_text, handwritten_notes, parsed_ocr_json, extraction_error, created_at, updated_at, folders(name)",
     )
     .eq("id", receiptId)
     .eq("user_id", userId)
