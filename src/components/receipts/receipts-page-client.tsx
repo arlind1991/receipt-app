@@ -41,9 +41,7 @@ export function ReceiptsPageClient() {
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<ReceiptsTab>(() =>
-    normalizeReceiptsTab(searchParams.get("tab")),
-  );
+  const [activeTab, setActiveTab] = useState<ReceiptsTab>("all");
   const queueWorkerReceiptIdRef = useRef<string | null>(null);
 
   async function fetchReceipts(): Promise<ReceiptLoadResult> {
@@ -109,7 +107,8 @@ export function ReceiptsPageClient() {
   }, []);
 
   useEffect(() => {
-    setActiveTab(normalizeReceiptsTab(searchParams.get("tab")));
+    const nextTab = normalizeReceiptsTab(searchParams.get("tab"));
+    setActiveTab((current) => (current === nextTab ? current : nextTab));
   }, [searchParams]);
 
   useEffect(() => {
@@ -133,12 +132,12 @@ export function ReceiptsPageClient() {
   );
 
   const processingReceipts = useMemo(
-    () => sortedItems.filter((item) => item.status === "processing"),
+    () => sortedItems.filter((item) => isProcessingStatus(item.status)),
     [sortedItems],
   );
 
   const allItems = useMemo(
-    () => sortedItems.filter((item) => item.status !== "processing"),
+    () => sortedItems.filter((item) => isCompletedOrNeedsReviewStatus(item.status)),
     [sortedItems],
   );
 
@@ -166,7 +165,17 @@ export function ReceiptsPageClient() {
     });
   }, [processingReceipts, queueItems]);
 
-  const visibleItems = activeTab === "recent" ? recentItems : allItems;
+  const visibleReceipts = useMemo(() => {
+    if (activeTab === "recent") {
+      return recentItems;
+    }
+
+    if (activeTab === "processing") {
+      return processingReceipts;
+    }
+
+    return allItems;
+  }, [activeTab, allItems, processingReceipts, recentItems]);
 
   useEffect(() => {
     if (queueItems.length === 0 && processingReceipts.length === 0) {
@@ -313,17 +322,17 @@ export function ReceiptsPageClient() {
             <ReceiptsTabButton
               active={activeTab === "recent"}
               label="Recent"
-              onClick={() => handleTabChange("recent", router)}
+              onClick={() => handleTabChange("recent", router, setActiveTab)}
             />
             <ReceiptsTabButton
               active={activeTab === "all"}
               label="All"
-              onClick={() => handleTabChange("all", router)}
+              onClick={() => handleTabChange("all", router, setActiveTab)}
             />
             <ReceiptsTabButton
               active={activeTab === "processing"}
               label="Processing"
-              onClick={() => handleTabChange("processing", router)}
+              onClick={() => handleTabChange("processing", router, setActiveTab)}
             />
           </div>
         </section>
@@ -347,7 +356,7 @@ export function ReceiptsPageClient() {
               <p className="mt-1 text-xs uppercase tracking-[0.16em] text-[var(--text-muted)]">
                 {activeTab === "processing"
                   ? `${processingListItems.length} item${processingListItems.length === 1 ? "" : "s"}`
-                  : `${visibleItems.length} item${visibleItems.length === 1 ? "" : "s"}`}
+                  : `${visibleReceipts.length} item${visibleReceipts.length === 1 ? "" : "s"}`}
               </p>
             </div>
           </div>
@@ -365,7 +374,7 @@ export function ReceiptsPageClient() {
             />
           ) : null}
 
-          {!loading && activeTab !== "processing" && visibleItems.length === 0 ? (
+          {!loading && activeTab !== "processing" && visibleReceipts.length === 0 ? (
             <EmptyState
               title="No receipts yet"
               description="Scan your first receipt to start building your expense list."
@@ -386,7 +395,7 @@ export function ReceiptsPageClient() {
             </div>
           ) : null}
 
-          {activeTab !== "processing" && !loading && visibleItems.length > 0 ? (
+          {activeTab !== "processing" && !loading && visibleReceipts.length > 0 ? (
             <div className="glass-panel overflow-hidden rounded-[28px]">
               <div className="grid grid-cols-[92px_1fr_auto] gap-3 border-b border-[var(--border-soft)] px-4 py-3 text-[11px] uppercase tracking-[0.16em] text-[var(--text-muted)]">
                 <span>Date</span>
@@ -394,7 +403,7 @@ export function ReceiptsPageClient() {
                 <span>Amount</span>
               </div>
               <div>
-                {visibleItems.map((item) => (
+                {visibleReceipts.map((item) => (
                   <ReceiptManagerRow key={item.id} item={item} />
                 ))}
               </div>
@@ -560,8 +569,21 @@ function ReceiptManagerRow({ item }: { item: ReceiptListItem }) {
   );
 }
 
-function handleTabChange(tab: ReceiptsTab, router: ReturnType<typeof useRouter>) {
+function handleTabChange(
+  tab: ReceiptsTab,
+  router: ReturnType<typeof useRouter>,
+  setActiveTab: (tab: ReceiptsTab) => void,
+) {
+  setActiveTab(tab);
   router.replace(`/receipts?tab=${tab}`, { scroll: false });
+}
+
+function isProcessingStatus(status: string) {
+  return status === "processing" || status === "uploading";
+}
+
+function isCompletedOrNeedsReviewStatus(status: string) {
+  return status === "done" || status === "completed" || status === "failed" || status === "needs_review";
 }
 
 function buildRowStatus(item: ReceiptListItem) {
