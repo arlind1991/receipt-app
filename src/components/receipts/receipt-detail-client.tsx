@@ -43,7 +43,6 @@ export function ReceiptDetailClient({
   const [isSavingEdits, setIsSavingEdits] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isImageViewerOpen, setIsImageViewerOpen] = useState(false);
-  const [saveCompleted, setSaveCompleted] = useState(false);
   const [folders, setFolders] = useState<FolderRow[]>([]);
   const [duplicateCandidates, setDuplicateCandidates] = useState<DuplicateReceiptCandidate[]>([]);
   const merchantInputRef = useRef<HTMLInputElement | null>(null);
@@ -143,7 +142,6 @@ export function ReceiptDetailClient({
     field: keyof typeof editValues,
     value: string,
   ) {
-    setSaveCompleted(false);
     setEditValues((current) => ({ ...current, [field]: value }));
   }
 
@@ -305,9 +303,9 @@ export function ReceiptDetailClient({
     }
 
     applyReceipt(refreshed.data);
-    setSaveCompleted(true);
-    setStatusBanner({ message: "Changes saved.", tone: "info" });
     setIsSavingEdits(false);
+    router.replace("/receipts");
+    router.refresh();
   }
 
   function handleDone() {
@@ -678,51 +676,25 @@ export function ReceiptDetailClient({
           <div className="glass-panel rounded-[30px] px-4 py-4 shadow-[0_20px_60px_rgba(2,9,17,0.5)]">
             <div className="flex items-center justify-between gap-4">
               <div className="min-w-0">
-                <p className="eyebrow">{saveCompleted ? "Saved" : "Review"}</p>
-                <p className="mt-2 text-sm font-medium text-[var(--text-primary)]">
-                  {receipt.status === "processing"
-                    ? "Finish processing before saving"
-                    : saveCompleted
-                      ? "Receipt saved"
-                      : isDirty
-                        ? "Unsaved changes ready"
-                        : "No unsaved changes"}
-                </p>
-                <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">
-                  {saveCompleted
-                    ? "Your edits are stored. Done takes you back to the receipts gallery."
-                    : receipt.status === "processing"
-                      ? "Fields will become editable once OCR has finished."
-                      : isDirty
-                        ? "Save from anywhere on the page without losing your place."
-                        : "Make an edit and the save action will become available here."}
-                </p>
+                <p className="eyebrow">Review</p>
               </div>
 
-              {saveCompleted ? (
-                <div className="flex shrink-0 items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={handleDone}
-                    className="rounded-full bg-[var(--accent)] px-5 py-3 text-sm font-semibold text-[var(--text-on-accent)] transition hover:bg-[var(--accent-strong)]"
-                  >
-                    Done
-                  </button>
-                </div>
-              ) : (
+              {isDirty ? (
                 <button
                   type="submit"
                   form="receipt-edit-form"
                   disabled={saveDisabled}
                   className="shrink-0 rounded-full bg-[var(--accent)] px-5 py-3 text-sm font-semibold text-[var(--text-on-accent)] transition hover:bg-[var(--accent-strong)] disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {receipt.status === "processing"
-                    ? "Finish processing"
-                    : isSavingEdits
-                      ? "Saving..."
-                      : isDirty
-                        ? "Save changes"
-                        : "Saved"}
+                  {isSavingEdits ? "Saving..." : "Save changes"}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleDone}
+                  className="shrink-0 rounded-full bg-[var(--accent)] px-5 py-3 text-sm font-semibold text-[var(--text-on-accent)] transition hover:bg-[var(--accent-strong)]"
+                >
+                  Done
                 </button>
               )}
             </div>

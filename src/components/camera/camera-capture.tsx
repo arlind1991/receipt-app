@@ -261,8 +261,8 @@ export function CameraCapture() {
   }
 
   return (
-    <main className="app-shell app-shell-with-nav relative overflow-hidden">
-      <section className="relative mx-auto flex min-h-[calc(100dvh-30px)] w-full max-w-md flex-col pb-32">
+    <main className="app-shell app-shell-with-nav relative h-[100dvh] overflow-hidden">
+      <section className="relative mx-auto flex h-full w-full max-w-md flex-col overflow-hidden">
         <div className="mb-4 flex items-start justify-between">
           <div>
             <p className="eyebrow">Camera First</p>
@@ -277,8 +277,8 @@ export function CameraCapture() {
           </button>
         </div>
 
-        <div className="relative flex-1">
-          <div className="camera-grid glass-panel relative h-full min-h-[62dvh] overflow-hidden rounded-[32px]">
+        <div className="relative min-h-0 flex-1 overflow-hidden">
+          <div className="camera-grid glass-panel relative h-full overflow-hidden rounded-[32px]">
             {!previewUrl ? (
               <>
                 <video
@@ -286,7 +286,7 @@ export function CameraCapture() {
                   autoPlay
                   playsInline
                   muted
-                  className="h-full min-h-[62dvh] w-full object-cover"
+                  className="h-full w-full object-cover"
                 />
                 <div className="pointer-events-none absolute inset-x-0 top-0 h-28 bg-gradient-to-b from-[var(--camera-top-fade)] to-transparent" />
                 <div className="pointer-events-none absolute inset-x-0 bottom-0 h-36 bg-gradient-to-t from-[var(--camera-bottom-fade)] to-transparent" />
@@ -299,7 +299,7 @@ export function CameraCapture() {
                 <img
                   src={previewUrl}
                   alt="Receipt preview"
-                  className="h-full min-h-[62dvh] w-full object-cover"
+                  className="h-full w-full object-cover"
                 />
                 {detection?.detectedMultiple ? (
                   <div className="pointer-events-none absolute inset-0">
@@ -391,19 +391,8 @@ export function CameraCapture() {
 
       {stage === "camera" ? (
         <section className="floating-action-bar">
-          <div className="glass-panel rounded-[30px] px-4 py-4 shadow-[0_20px_60px_rgba(2,9,17,0.5)]">
-            <div className="flex items-center justify-between gap-4">
-              <div className="min-w-0">
-                <p className="eyebrow">Quick Capture</p>
-                <p className="mt-2 text-sm font-medium text-[var(--text-primary)]">
-                  {isCameraReady ? "Ready to snap" : "Preparing capture"}
-                </p>
-                <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">
-                  {selectedFolderId !== UNSORTED_FOLDER_ID
-                    ? `Saving into ${folders.find((folder) => folder.id === selectedFolderId)?.name ?? "your last folder"}.`
-                    : "Tap once to capture, scan, and open the receipt."}
-                </p>
-              </div>
+          <div className="glass-panel rounded-[30px] px-4 py-3 shadow-[0_20px_60px_rgba(2,9,17,0.5)]">
+            <div className="flex flex-col items-center gap-2 text-center">
               <button
                 type="button"
                 aria-label="Capture receipt"
@@ -413,6 +402,13 @@ export function CameraCapture() {
               >
                 <span className="h-[4.15rem] w-[4.15rem] rounded-full bg-[var(--accent)] shadow-[0_0_40px_rgba(143,247,208,0.55)]" />
               </button>
+              <p className="text-xs text-[var(--text-secondary)]">
+                {selectedFolderId !== UNSORTED_FOLDER_ID
+                  ? `Saving into ${folders.find((folder) => folder.id === selectedFolderId)?.name ?? "your last folder"}`
+                  : isCameraReady
+                    ? "Ready to capture"
+                    : "Preparing capture"}
+              </p>
             </div>
           </div>
         </section>
