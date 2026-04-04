@@ -56,7 +56,7 @@ export async function preprocessReceiptImageForOcr(params: {
     .normalise()
     .linear(1.08, -8)
     .median(1)
-    .sharpen({ m1: 0.7, m2: 1.4, sigma: 1.1, x1: 2.2, x2: 3 })
+    .sharpen(1.1, 1.4, 2.2)
     .jpeg({ chromaSubsampling: "4:4:4", mozjpeg: true, quality: 92 });
 
   const ocrBuffer = await pipeline.toBuffer();
