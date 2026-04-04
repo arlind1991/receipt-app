@@ -41,7 +41,7 @@ export async function detectReceiptRegionsFromImage(params: {
           content: [
             {
               type: "input_text",
-              text: "You inspect camera photos and decide whether they contain one receipt or multiple separate receipts. If multiple paper receipts are clearly visible, return one bounding box per receipt. Use normalized coordinates from 0 to 1. If uncertain, return a single receipt.",
+              text: "You inspect camera photos and detect receipt paper regions. Always return the best receipt bounding box even if only one receipt is visible. If multiple paper receipts are clearly visible, return one bounding box per receipt. Use normalized coordinates from 0 to 1. If uncertain, return a single full-image receipt box.",
             },
           ],
         },
@@ -50,7 +50,7 @@ export async function detectReceiptRegionsFromImage(params: {
           content: [
             {
               type: "input_text",
-              text: "Detect how many separate receipts are visible in this image. Return JSON only.",
+              text: "Detect receipt paper regions in this image. Return JSON only.",
             },
             {
               type: "input_image",
@@ -139,14 +139,10 @@ export async function detectReceiptRegionsFromImage(params: {
     ),
   );
 
-  if (receiptCount <= 1 || boxes.length <= 1) {
-    return defaultResult;
-  }
-
   return {
-    boxes,
-    detectedMultiple: true,
-    receiptCount: Math.max(receiptCount, boxes.length),
+    boxes: boxes.length > 0 ? boxes : defaultResult.boxes,
+    detectedMultiple: receiptCount > 1 && boxes.length > 1,
+    receiptCount: receiptCount > 1 ? Math.max(receiptCount, boxes.length) : 1,
   };
 }
 
