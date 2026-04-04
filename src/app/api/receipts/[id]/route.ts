@@ -35,6 +35,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     currency?: string | null;
     folder_id?: string | null;
     merchant_name?: string | null;
+    notes?: string | null;
     receipt_date?: string | null;
     total_amount?: number | null;
     vat_amount?: number | null;
@@ -69,6 +70,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     currency: normalizeCurrency(payload.currency),
     folder_id: nextFolderId,
     merchant_name: normalizeText(payload.merchant_name),
+    notes: normalizeText(payload.notes),
     receipt_date: normalizeDate(payload.receipt_date),
     total_amount: normalizeNumber(payload.total_amount),
     vat_amount: normalizeNumber(payload.vat_amount),

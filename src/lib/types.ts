@@ -58,6 +58,7 @@ export type ReceiptEditableFields = {
   currency: string | null;
   folder_id: string | null;
   merchant_name: string | null;
+  notes: string | null;
   receipt_date: string | null;
   total_amount: number | null;
   vat_amount: number | null;

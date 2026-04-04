@@ -1,5 +1,4 @@
 import sharp from "sharp";
-import { detectReceiptRegionsFromImage } from "@/lib/receipt-detection";
 
 export type ReceiptPreprocessingResult = {
   contentType: string;
@@ -20,43 +19,13 @@ export async function preprocessReceiptImageForOcr(params: {
   contentType: string;
   imageBuffer: Buffer;
 }) {
-  const metadata = await sharp(params.imageBuffer, { failOn: "none" })
-    .rotate()
-    .metadata();
-
-  const width = metadata.width ?? 0;
-  const height = metadata.height ?? 0;
-  const detection = await detectReceiptRegionsFromImage({
-    contentType: params.contentType,
-    imageBuffer: params.imageBuffer,
-  });
-
-  const primaryBox = detection.boxes[0];
-  const shouldCrop =
-    width > 0 &&
-    height > 0 &&
-    primaryBox &&
-    (!detection.detectedMultiple || detection.receiptCount === 1) &&
-    (primaryBox.width < 0.98 || primaryBox.height < 0.98 || primaryBox.x > 0.01 || primaryBox.y > 0.01);
-
   let pipeline = sharp(params.imageBuffer, { failOn: "none" }).rotate();
 
-  if (shouldCrop && primaryBox) {
-    pipeline = pipeline.extract({
-      height: Math.max(1, Math.round(height * primaryBox.height)),
-      left: Math.max(0, Math.round(width * primaryBox.x)),
-      top: Math.max(0, Math.round(height * primaryBox.y)),
-      width: Math.max(1, Math.round(width * primaryBox.width)),
-    });
-  }
-
   pipeline = pipeline
-    .trim({ background: { b: 255, g: 255, r: 255 }, threshold: 12 })
     .grayscale()
     .normalise()
-    .linear(1.08, -8)
-    .median(1)
-    .sharpen(1.1, 1.4, 2.2)
+    .linear(1.12, -10)
+    .sharpen(1, 1.2, 1.8)
     .jpeg({ chromaSubsampling: "4:4:4", mozjpeg: true, quality: 92 });
 
   const ocrBuffer = await pipeline.toBuffer();
@@ -65,13 +34,13 @@ export async function preprocessReceiptImageForOcr(params: {
     contentType: "image/jpeg",
     debug: {
       contrast_enhanced: true,
-      crop_applied: Boolean(shouldCrop),
-      detected_receipt_count: detection.receiptCount,
+      crop_applied: false,
+      detected_receipt_count: 1,
       grayscale_applied: true,
       sharpen_applied: true,
-      shadow_reduction_applied: true,
+      shadow_reduction_applied: false,
       straighten_applied: true,
-      trim_applied: true,
+      trim_applied: false,
     },
     ocrBuffer,
   } satisfies ReceiptPreprocessingResult;
