@@ -145,7 +145,9 @@ export async function extractReceiptDataFromImage(params: {
       raw_ocr_text: rawText,
       debug,
       failure_reason: failureReason,
-      is_partial: rawText.length > 0 && debug.extracted_fields.length < 10,
+      // Partial only when a field the user needs is missing (there are 8 fields at most, so
+      // the old "< 10 fields" test flagged every receipt).
+      is_partial: rawText.length > 0 && (!heuristic.fields.merchant_name || !heuristic.fields.receipt_date || heuristic.fields.total_amount == null),
       parsed_json_text: parsedJsonText,
       should_fail: shouldFail,
     } satisfies ReceiptProcessingOutput,
@@ -170,16 +172,31 @@ async function requestImageText(params: { contentType: string; imageBuffer: Buff
     model: params.model,
     input: [
       { role: "system", content: [{ type: "input_text", text: params.prompt }] },
-      { role: "user", content: [{ type: "input_text", text: params.prompt }, { type: "input_image", image_url: imageDataUrl, detail: "auto" }] },
+      // "high" detail reads small receipt print far more reliably than "auto".
+      { role: "user", content: [{ type: "input_text", text: params.prompt }, { type: "input_image", image_url: imageDataUrl, detail: "high" }] },
     ],
-    max_output_tokens: 1600,
+    max_output_tokens: 2000,
   };
-  const requestShape = JSON.stringify({ model: payload.model, input: [{ role: "system" }, { role: "user", content: [{ type: "input_text" }, { type: "input_image", image_url: "[data-url]", detail: "auto" }] }], max_output_tokens: payload.max_output_tokens });
+  const requestShape = JSON.stringify({ model: payload.model, input: [{ role: "system" }, { role: "user", content: [{ type: "input_text" }, { type: "input_image", image_url: "[data-url]", detail: "high" }] }], max_output_tokens: payload.max_output_tokens });
   const attempt = await sendOpenAiRequest(payload, { imageInputSent: true, model: params.model, requestShape });
   if (!attempt.ok || !attempt.debug.assistant_text.trim()) {
     return { ok: false as const, error: attempt.debug.empty_reason ?? "OpenAI image transcription returned an empty response.", debug: attempt.debug };
   }
-  return { ok: true as const, data: normalizeRawText(attempt.debug.assistant_text), debug: attempt.debug };
+  const text = stripCodeFences(normalizeRawText(attempt.debug.assistant_text));
+  if (looksLikeRefusal(text)) {
+    return { ok: false as const, error: "No readable receipt text was found in the photo. Retake it closer, flat and in good light.", debug: { ...attempt.debug, empty_reason: "Model declined to transcribe the image." } };
+  }
+  return { ok: true as const, data: text, debug: attempt.debug };
+}
+
+// The model sometimes wraps the transcription in ``` fences.
+function stripCodeFences(value: string) {
+  return value.replace(/^```[a-z]*\s*\n?/i, "").replace(/\n?```\s*$/, "").trim();
+}
+
+// e.g. "I'm sorry, but I can't read this image." Previously these were saved as the merchant name.
+function looksLikeRefusal(value: string) {
+  return value.length < 300 && /^(i'?m sorry|sorry,|i can(?:no|')t|i am unable|unable to)/i.test(value);
 }
 
 async function extractStructuredFieldsFromOcrText(rawText: string) {
@@ -205,13 +222,35 @@ async function extractStructuredFieldsFromOcrText(rawText: string) {
 }
 
 async function sendOpenAiRequest(payload: object, meta: { imageInputSent: boolean; model: string; requestShape: string }) {
-  const response = await fetch("https://api.openai.com/v1/responses", { method: "POST", headers: { Authorization: `Bearer ${openAiApiKey}`, "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-  const rawResponseBody = await response.text();
-  const extracted = extractAssistantText(safeParseJson(rawResponseBody));
+  const baseDebug = { image_input_sent: meta.imageInputSent, model: meta.model, request_shape: meta.requestShape };
+  let response: Response;
+  let rawResponseBody: string;
+  try {
+    response = await fetch("https://api.openai.com/v1/responses", { method: "POST", headers: { Authorization: `Bearer ${openAiApiKey}`, "Content-Type": "application/json" }, body: JSON.stringify(payload), signal: AbortSignal.timeout(90_000) });
+    rawResponseBody = await response.text();
+  } catch (error) {
+    const reason = `Could not reach OpenAI: ${error instanceof Error ? error.message : String(error)}`;
+    return { ok: false, debug: { ...baseDebug, assistant_text: "", empty_reason: reason, raw_response_body: "", response_field_read: "none", response_empty: true } satisfies OpenAiStageDebug };
+  }
+  const responseJson = safeParseJson(rawResponseBody);
+  const extracted = extractAssistantText(responseJson);
+  // An HTTP error (no credits, bad key, rate limit) explains the empty text better than "no text present".
+  const emptyReason = response.ok ? extracted.emptyReason : describeOpenAiError(response.status, responseJson);
   return {
     ok: response.ok,
-    debug: { assistant_text: extracted.text, empty_reason: extracted.emptyReason, image_input_sent: meta.imageInputSent, model: meta.model, raw_response_body: rawResponseBody, request_shape: meta.requestShape, response_field_read: extracted.source, response_empty: extracted.text.trim().length === 0 } satisfies OpenAiStageDebug,
+    debug: { ...baseDebug, assistant_text: extracted.text, empty_reason: emptyReason, raw_response_body: rawResponseBody, response_field_read: extracted.source, response_empty: extracted.text.trim().length === 0 } satisfies OpenAiStageDebug,
   };
+}
+
+function describeOpenAiError(status: number, responseJson: unknown) {
+  const error = (responseJson as { error?: { code?: string | null; message?: string; type?: string } } | null)?.error;
+  const code = error?.code ?? error?.type ?? "";
+  if (code === "credit_balance_exhausted" || code === "insufficient_quota") {
+    return "OpenAI account is out of credits, so receipts can't be read. Add credits at platform.openai.com/settings/organization/billing, then retry.";
+  }
+  if (status === 401) return "OpenAI rejected the API key. Check OPENAI_API_KEY.";
+  if (status === 429) return "OpenAI rate limit reached. Retry in a minute.";
+  return `OpenAI request failed (HTTP ${status})${error?.message ? `: ${error.message}` : "."}`;
 }
 
 function extractAssistantText(responseJson: unknown) {

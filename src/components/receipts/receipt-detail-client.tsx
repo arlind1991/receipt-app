@@ -32,6 +32,7 @@ export function ReceiptDetailClient({ receiptId }: ReceiptDetailClientProps) {
   const [loading, setLoading] = useState(true);
   const [isSavingEdits, setIsSavingEdits] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isRetrying, setIsRetrying] = useState(false);
   const [isImageViewerOpen, setIsImageViewerOpen] = useState(false);
   const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<DetailTab>("info");
@@ -178,6 +179,21 @@ export function ReceiptDetailClient({ receiptId }: ReceiptDetailClientProps) {
     setStatusBanner({ message: "Changes saved.", tone: "info" });
   }
 
+  async function handleRetry() {
+    setIsRetrying(true);
+    setStatusBanner(null);
+    const result = await triggerReceiptProcessing(receiptId);
+    if (!result.ok) {
+      setStatusBanner({ message: result.error, tone: "error" });
+    }
+
+    const refreshed = await fetchReceipt();
+    if (refreshed.ok) {
+      applyReceipt(refreshed.data);
+    }
+    setIsRetrying(false);
+  }
+
   async function handleDeleteReceipt() {
     if (!receipt) {
       return;
@@ -314,6 +330,29 @@ export function ReceiptDetailClient({ receiptId }: ReceiptDetailClientProps) {
                   {receipt.status}
                 </span>
               </div>
+              {receipt.extraction_error ? (
+                <div className="mt-4 flex items-start justify-between gap-3">
+                  <p
+                    className={`text-sm ${
+                      receipt.status === "failed"
+                        ? "text-[var(--danger)]"
+                        : "text-[var(--text-secondary)]"
+                    }`}
+                  >
+                    {receipt.extraction_error}
+                  </p>
+                  {receipt.status === "failed" ? (
+                    <button
+                      type="button"
+                      onClick={() => void handleRetry()}
+                      disabled={isRetrying}
+                      className="secondary-button shrink-0 rounded-full px-4 py-2 text-sm transition disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {isRetrying ? "Reading..." : "Try again"}
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
             </section>
 
             {activeTab === "info" ? (

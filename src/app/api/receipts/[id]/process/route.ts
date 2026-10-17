@@ -141,7 +141,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
   const extractionError =
     extractionResult.data.failure_reason ??
     (extractionResult.data.is_partial
-      ? "Structured extraction was incomplete; saved partial OCR results."
+      ? "Some details couldn't be read. Check the merchant, date and total."
       : null);
   const parsedDebugJson = JSON.stringify(
     {
