@@ -263,6 +263,63 @@ export async function sendMagicLink(email: string) {
   return { ok: true as const };
 }
 
+// Sends a 6-digit sign-in code. The Supabase "Magic Link" email template must
+// include {{ .Token }} for the code to appear in the email.
+export async function sendEmailOtp(email: string) {
+  const supabase = getSupabaseBrowserClient();
+  if (!supabase) {
+    return {
+      ok: false as const,
+      error: supabaseEnvError ?? "Supabase environment variables are missing.",
+    };
+  }
+
+  bindAuthStateListener(supabase);
+
+  const { error } = await supabase.auth.signInWithOtp({
+    email,
+    options: {
+      shouldCreateUser: true,
+    },
+  });
+
+  if (error) {
+    return { ok: false as const, error: error.message };
+  }
+
+  return { ok: true as const };
+}
+
+export async function verifyEmailOtp(email: string, token: string) {
+  const supabase = getSupabaseBrowserClient();
+  if (!supabase) {
+    return {
+      ok: false as const,
+      error: supabaseEnvError ?? "Supabase environment variables are missing.",
+    };
+  }
+
+  bindAuthStateListener(supabase);
+
+  const { data, error } = await supabase.auth.verifyOtp({
+    email,
+    token,
+    type: "email",
+  });
+
+  if (error) {
+    return { ok: false as const, error: error.message };
+  }
+
+  updateSessionBootstrapState({
+    error: null,
+    status: data.user ? "ready" : "signed_out",
+    user: data.user ?? null,
+  });
+
+  return { ok: true as const };
+}
+
 export async function sendPasswordReset(email: string) {
   const supabase = getSupabaseBrowserClient();
   if (!supabase) {

@@ -1,279 +1,176 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { StatusBanner } from "@/components/status-banner";
 import {
-  sendMagicLink,
-  sendPasswordReset,
-  signInWithPassword,
-  signInWithProvider,
-  signUpWithPassword,
+  sendEmailOtp,
   supabaseEnvError,
+  verifyEmailOtp,
 } from "@/lib/supabase/session";
 
-type AuthMode = "sign_in" | "sign_up" | "forgot_password";
+// Email OTP only: enter email → receive a 6-digit code → enter it → signed in.
+// The previous password / Google / Apple / magic-link UI lives in legacy-login-screen.tsx.
+type Step = "email" | "code";
+
+const CODE_LENGTH = 6;
 
 export function LoginScreen() {
-  const [mode, setMode] = useState<AuthMode>("sign_in");
+  const [step, setStep] = useState<Step>("email");
   const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const [code, setCode] = useState("");
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [statusTone, setStatusTone] = useState<"info" | "error">("info");
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [showMagicLink, setShowMagicLink] = useState(false);
 
-  const headline = useMemo(() => {
-    if (mode === "sign_up") {
-      return "Create your account";
-    }
+  function showError(message: string) {
+    setStatusTone("error");
+    setStatusMessage(message);
+  }
 
-    if (mode === "forgot_password") {
-      return "Reset your password";
-    }
-
-    return "Sign in";
-  }, [mode]);
-
-  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
+  async function requestCode() {
     if (supabaseEnvError) {
-      setStatusTone("error");
-      setStatusMessage(supabaseEnvError);
+      showError(supabaseEnvError);
       return;
     }
 
     setIsSubmitting(true);
     setStatusMessage(null);
 
-    if (mode === "forgot_password") {
-      const result = await sendPasswordReset(email.trim());
-      if (!result.ok) {
-        setStatusTone("error");
-        setStatusMessage(result.error);
-        setIsSubmitting(false);
-        return;
-      }
+    const result = await sendEmailOtp(email.trim());
+    setIsSubmitting(false);
 
-      setStatusTone("info");
-      setStatusMessage("Password reset email sent. Open the link to choose a new password.");
-      setIsSubmitting(false);
-      return;
-    }
-
-    if (mode === "sign_up") {
-      const result = await signUpWithPassword(email.trim(), password);
-      if (!result.ok) {
-        setStatusTone("error");
-        setStatusMessage(result.error);
-        setIsSubmitting(false);
-        return;
-      }
-
-      setStatusTone("info");
-      setStatusMessage(
-        result.needsEmailConfirmation
-          ? "Check your email to confirm your account, then come back and sign in."
-          : "Account created. You’re signed in and ready to scan.",
-      );
-      setIsSubmitting(false);
-      return;
-    }
-
-    const result = await signInWithPassword(email.trim(), password);
     if (!result.ok) {
-      setStatusTone("error");
-      setStatusMessage(result.error);
+      showError(result.error);
+      return;
+    }
+
+    setCode("");
+    setStep("code");
+    setStatusTone("info");
+    setStatusMessage(`We sent a ${CODE_LENGTH}-digit code to ${email.trim()}.`);
+  }
+
+  async function handleEmailSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await requestCode();
+  }
+
+  async function handleCodeSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (code.length !== CODE_LENGTH) {
+      showError(`Enter the ${CODE_LENGTH}-digit code from the email.`);
+      return;
+    }
+
+    setIsSubmitting(true);
+    setStatusMessage(null);
+
+    const result = await verifyEmailOtp(email.trim(), code);
+    if (!result.ok) {
       setIsSubmitting(false);
+      showError(result.error);
       return;
     }
 
     setStatusTone("info");
     setStatusMessage("Signing you in...");
-    setIsSubmitting(false);
   }
 
-  async function handleMagicLink() {
-    if (supabaseEnvError) {
-      setStatusTone("error");
-      setStatusMessage(supabaseEnvError);
-      return;
-    }
-
-    setIsSubmitting(true);
+  function changeEmail() {
+    setStep("email");
+    setCode("");
     setStatusMessage(null);
-
-    const result = await sendMagicLink(email.trim());
-    if (!result.ok) {
-      setStatusTone("error");
-      setStatusMessage(result.error);
-      setIsSubmitting(false);
-      return;
-    }
-
-    setStatusTone("info");
-    setStatusMessage("Magic link sent. Open it on this device to finish signing in.");
-    setIsSubmitting(false);
-  }
-
-  async function handleSocialSignIn(provider: "google" | "apple") {
-    if (supabaseEnvError) {
-      setStatusTone("error");
-      setStatusMessage(supabaseEnvError);
-      return;
-    }
-
-    setIsSubmitting(true);
-    setStatusMessage(null);
-
-    const result = await signInWithProvider(provider);
-    if (!result.ok) {
-      setStatusTone("error");
-      setStatusMessage(result.error);
-      setIsSubmitting(false);
-    }
   }
 
   return (
     <main className="app-shell flex min-h-[100dvh] items-center justify-center px-4 py-6">
       <section className="glass-panel mx-auto w-full max-w-md rounded-[32px] p-6">
         <p className="eyebrow">SnapReceipt</p>
-        <h1 className="mt-3 text-3xl font-semibold tracking-tight">{headline}</h1>
+        <h1 className="mt-3 text-3xl font-semibold tracking-tight">
+          {step === "email" ? "Sign in" : "Enter your code"}
+        </h1>
         <p className="mt-3 text-sm leading-6 text-[var(--text-secondary)]">
-          Keep receipts synced to your account so they stay with you across devices.
+          {step === "email"
+            ? "Enter your email and we’ll send you a sign-in code. No password needed."
+            : "Check your inbox and enter the code to finish signing in."}
         </p>
 
-        <div className="mt-6 grid gap-3">
-          <button
-            type="button"
-            disabled={isSubmitting}
-            onClick={() => void handleSocialSignIn("google")}
-            className="field-control w-full rounded-full px-4 py-3 text-sm font-medium transition hover:bg-[var(--nav-hover)] disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            Continue with Google
-          </button>
-          <button
-            type="button"
-            disabled={isSubmitting}
-            onClick={() => void handleSocialSignIn("apple")}
-            className="field-control w-full rounded-full px-4 py-3 text-sm font-medium transition hover:bg-[var(--nav-hover)] disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            Continue with Apple
-          </button>
-        </div>
-
-        <div className="my-6 flex items-center gap-3 text-xs uppercase tracking-[0.2em] text-[var(--text-muted)]">
-          <span className="divider-line h-px flex-1" />
-          <span>Email</span>
-          <span className="divider-line h-px flex-1" />
-        </div>
-
-        <form onSubmit={(event) => void handleSubmit(event)} className="space-y-4">
-          <label className="block">
-            <span className="mb-2 block text-sm text-[var(--text-secondary)]">Email</span>
-            <input
-              type="email"
-              required
-              autoComplete="email"
-              inputMode="email"
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-              placeholder="you@example.com"
-              className="field-control w-full rounded-2xl px-4 py-3 text-sm outline-none"
-            />
-          </label>
-
-          {mode !== "forgot_password" ? (
+        {step === "email" ? (
+          <form onSubmit={(event) => void handleEmailSubmit(event)} className="mt-6 space-y-4">
             <label className="block">
-              <span className="mb-2 block text-sm text-[var(--text-secondary)]">Password</span>
+              <span className="mb-2 block text-sm text-[var(--text-secondary)]">Email</span>
               <input
-                type="password"
+                type="email"
                 required
-                autoComplete={mode === "sign_up" ? "new-password" : "current-password"}
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                placeholder="Your password"
+                autoFocus
+                autoComplete="email"
+                inputMode="email"
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+                placeholder="you@example.com"
                 className="field-control w-full rounded-2xl px-4 py-3 text-sm outline-none"
               />
             </label>
-          ) : null}
 
-          <button
-            type="submit"
-            disabled={isSubmitting}
-            className="w-full rounded-full bg-[var(--accent)] px-4 py-3 text-sm font-semibold text-[var(--text-on-accent)] transition hover:bg-[var(--accent-strong)] disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {isSubmitting
-              ? mode === "forgot_password"
-                ? "Sending reset..."
-                : mode === "sign_up"
-                  ? "Creating account..."
-                  : "Signing in..."
-              : mode === "forgot_password"
-                ? "Send reset link"
-                : mode === "sign_up"
-                  ? "Create account"
-                  : "Sign in"}
-          </button>
-        </form>
-
-        <div className="mt-4 flex flex-wrap gap-3 text-sm text-[var(--text-secondary)]">
-          {mode !== "sign_in" ? (
             <button
-              type="button"
-              onClick={() => setMode("sign_in")}
-              className="transition hover:text-[var(--text-primary)]"
+              type="submit"
+              disabled={isSubmitting || !email.trim()}
+              className="w-full rounded-full bg-[var(--accent)] px-4 py-3 text-sm font-semibold text-[var(--text-on-accent)] transition hover:bg-[var(--accent-strong)] disabled:cursor-not-allowed disabled:opacity-60"
             >
-              Sign in instead
+              {isSubmitting ? "Sending code..." : "Send code"}
             </button>
-          ) : null}
+          </form>
+        ) : (
+          <form onSubmit={(event) => void handleCodeSubmit(event)} className="mt-6 space-y-4">
+            <label className="block">
+              <span className="mb-2 block text-sm text-[var(--text-secondary)]">
+                {CODE_LENGTH}-digit code
+              </span>
+              <input
+                type="text"
+                required
+                autoFocus
+                autoComplete="one-time-code"
+                inputMode="numeric"
+                pattern={`[0-9]{${CODE_LENGTH}}`}
+                value={code}
+                onChange={(event) =>
+                  setCode(event.target.value.replace(/\D/g, "").slice(0, CODE_LENGTH))
+                }
+                placeholder="123456"
+                className="field-control w-full rounded-2xl px-4 py-3 text-center text-2xl tracking-[0.5em] outline-none"
+              />
+            </label>
 
-          {mode !== "sign_up" ? (
             <button
-              type="button"
-              onClick={() => setMode("sign_up")}
-              className="transition hover:text-[var(--text-primary)]"
+              type="submit"
+              disabled={isSubmitting || code.length !== CODE_LENGTH}
+              className="w-full rounded-full bg-[var(--accent)] px-4 py-3 text-sm font-semibold text-[var(--text-on-accent)] transition hover:bg-[var(--accent-strong)] disabled:cursor-not-allowed disabled:opacity-60"
             >
-              Create account
+              {isSubmitting ? "Verifying..." : "Sign in"}
             </button>
-          ) : null}
 
-          {mode !== "forgot_password" ? (
-            <button
-              type="button"
-              onClick={() => setMode("forgot_password")}
-              className="transition hover:text-[var(--text-primary)]"
-            >
-              Forgot password
-            </button>
-          ) : null}
-        </div>
-
-        <div className="mt-6 rounded-[24px] border border-[var(--border-soft)] bg-[var(--card-soft)] p-4">
-          <button
-            type="button"
-            onClick={() => setShowMagicLink((current) => !current)}
-            className="text-sm font-medium text-[var(--text-primary)] transition hover:text-[var(--accent)]"
-          >
-            {showMagicLink ? "Hide magic link option" : "Use magic link instead"}
-          </button>
-
-          {showMagicLink ? (
-            <div className="mt-3 space-y-3">
-              <p className="text-sm leading-6 text-[var(--text-secondary)]">
-                Magic link is available as a fallback if you do not want to use a password.
-              </p>
+            <div className="flex flex-wrap justify-between gap-3 text-sm text-[var(--text-secondary)]">
               <button
                 type="button"
-                disabled={isSubmitting || !email.trim()}
-                onClick={() => void handleMagicLink()}
-                className="field-control w-full rounded-full px-4 py-3 text-sm font-medium transition hover:bg-[var(--nav-hover)] disabled:cursor-not-allowed disabled:opacity-60"
+                onClick={changeEmail}
+                disabled={isSubmitting}
+                className="transition hover:text-[var(--text-primary)]"
               >
-                Send magic link
+                Use a different email
+              </button>
+              <button
+                type="button"
+                onClick={() => void requestCode()}
+                disabled={isSubmitting}
+                className="transition hover:text-[var(--text-primary)]"
+              >
+                Resend code
               </button>
             </div>
-          ) : null}
-        </div>
+          </form>
+        )}
 
         {statusMessage ? (
           <div className="mt-4">
