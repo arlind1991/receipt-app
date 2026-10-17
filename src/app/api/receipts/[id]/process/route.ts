@@ -7,6 +7,7 @@ import {
 import { preprocessReceiptImageForOcr } from "@/lib/receipt-image-processing";
 import { extractReceiptDataWithClaude, CLAUDE_RECEIPT_MODEL } from "@/lib/receipt-ocr-claude";
 import { convertHeicToJpeg } from "@/lib/image-format";
+import { syncReceiptToGardenWow } from "@/lib/gardenwow/sync";
 import {
   getAuthenticatedUserFromAccessToken,
   getSupabaseAdminClient,
@@ -211,8 +212,16 @@ export async function POST(request: NextRequest, context: RouteContext) {
     return NextResponse.json({ error: updateError.message }, { status: 500 });
   }
 
+  // GardenWow accounts: file the receipt (Unassigned unless a client was
+  // chosen). A failure is recorded on the receipt, not treated as a read error.
+  const gardenwow =
+    nextStatus === "done"
+      ? await syncReceiptToGardenWow(supabase, receipt.id, authResult.data.id)
+      : null;
+
   return NextResponse.json({
     ok: true,
+    gardenwow: gardenwow?.state === "disabled" ? undefined : gardenwow?.state,
     debug: {
       image_download_succeeded: extractionResult.data.debug.image_download_succeeded,
       ocr_text_returned: extractionResult.data.debug.ocr_text_returned,

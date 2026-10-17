@@ -2,16 +2,17 @@
 
 import { useEffect, useState } from "react";
 import {
-  fetchGardenWowLink,
+  fetchGardenWowState,
   isGardenWowEnabled,
   listGardenWowVisits,
+  removeReceiptFromGardenWow,
   searchGardenWowClients,
   sendReceiptToGardenWow,
-  undoGardenWowSend,
 } from "@/lib/gardenwow/client";
 import type {
   GardenWowClient,
-  GardenWowReceiptLink,
+  GardenWowReceiptState,
+  GardenWowTarget,
   GardenWowVisit,
 } from "@/lib/gardenwow/types";
 
@@ -19,7 +20,8 @@ type GardenWowPanelProps = {
   hasUnsavedChanges: boolean;
   receiptDate: string | null;
   receiptId: string;
-  totalAmount: number | null;
+  // Changes whenever the receipt is saved, so the panel picks up the new state.
+  refreshKey: string;
   userId: string;
 };
 
@@ -28,14 +30,13 @@ export function GardenWowPanel({
   hasUnsavedChanges,
   receiptDate,
   receiptId,
-  totalAmount,
+  refreshKey,
   userId,
 }: GardenWowPanelProps) {
   const [enabled, setEnabled] = useState(false);
-  const [link, setLink] = useState<GardenWowReceiptLink | null>(null);
-  const [linkLoaded, setLinkLoaded] = useState(false);
+  const [state, setState] = useState<GardenWowReceiptState | null>(null);
   const [isPickerOpen, setIsPickerOpen] = useState(false);
-  const [isUndoing, setIsUndoing] = useState(false);
+  const [busy, setBusy] = useState<null | "sending" | "removing">(null);
   const [message, setMessage] = useState<{ text: string; tone: "error" | "info" } | null>(null);
 
   useEffect(() => {
@@ -48,108 +49,150 @@ export function GardenWowPanel({
       }
       setEnabled(true);
 
-      const result = await fetchGardenWowLink(receiptId);
+      const result = await fetchGardenWowState(receiptId);
       if (cancelled) {
         return;
       }
       if (result.ok) {
-        setLink(result.data);
+        setState(result.data);
       } else {
         setMessage({ text: result.error, tone: "error" });
       }
-      setLinkLoaded(true);
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [receiptId, userId]);
+  }, [receiptId, userId, refreshKey]);
 
   if (!enabled) {
     return null;
   }
 
-  const missingFields = [
-    !receiptDate ? "date" : null,
-    totalAmount == null ? "total" : null,
-  ].filter(Boolean);
-  const blockedReason = hasUnsavedChanges
-    ? "Save your changes before sending."
-    : missingFields.length
-      ? `Add the ${missingFields.join(" and ")} and save before sending.`
-      : null;
+  const link = state?.link ?? null;
+  const target = state?.target ?? null;
+  const missing = state?.missing ?? [];
 
-  async function handleUndo() {
-    if (!link) {
-      return;
+  async function send(nextTarget?: GardenWowTarget) {
+    setBusy("sending");
+    setMessage(null);
+    const result = await sendReceiptToGardenWow(receiptId, nextTarget);
+    setBusy(null);
+    if (result.ok) {
+      setState(result.data);
+      setMessage({
+        text: result.data.outcome === "unchanged" ? "GardenWow is already up to date." : "Sent to GardenWow.",
+        tone: "info",
+      });
+      return true;
     }
+    if (result.state) {
+      setState(result.state);
+    }
+    setMessage({ text: result.error, tone: "error" });
+    return false;
+  }
+
+  async function handleRemove() {
     const confirmed = window.confirm(
-      `Remove this receipt from ${link.target_client_name ?? "GardenWow"}? It's deleted from GardenWow and can be sent again.`,
+      "Remove this receipt from GardenWow? It won't be sent again unless you send it.",
     );
     if (!confirmed) {
       return;
     }
 
-    setIsUndoing(true);
+    setBusy("removing");
     setMessage(null);
-    const result = await undoGardenWowSend(receiptId);
-    setIsUndoing(false);
+    const result = await removeReceiptFromGardenWow(receiptId);
+    setBusy(null);
     if (!result.ok) {
       setMessage({ text: result.error, tone: "error" });
       return;
     }
-    setLink(null);
+    setState(result.data);
     setMessage({ text: "Removed from GardenWow.", tone: "info" });
   }
 
+  const destination = describeTarget(link?.status === "sent" ? linkTarget(link) : target);
+  let headline = "Checking...";
+  let detail: string | null = null;
+  if (state) {
+    if (link?.status === "sent") {
+      headline = `In GardenWow: ${destination}`;
+      detail = `Sent ${new Date(link.sent_at).toLocaleDateString("en-GB")}. The office can move it to another folder there.`;
+    } else if (link?.status === "failed") {
+      headline = "Couldn't send to GardenWow";
+      detail = link.last_error;
+    } else if (link?.status === "removed") {
+      headline = "Removed from GardenWow";
+      detail = `It will go to ${destination} if you send it again.`;
+    } else if (missing.length) {
+      headline = `Waiting for the ${missing.join(" and ")}`;
+      detail = `It will be sent to ${destination} once you add the ${missing.join(" and ")} and save.`;
+    } else {
+      headline = "Not in GardenWow yet";
+      detail = `It will go to ${destination}.`;
+    }
+  }
+
+  const blocked = hasUnsavedChanges || busy !== null;
+  const canSend = missing.length === 0;
+
   return (
     <section className="glass-panel rounded-[28px] p-5">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="eyebrow">GardenWow</p>
-          {!linkLoaded ? (
-            <p className="mt-2 text-sm text-[var(--text-secondary)]">Checking...</p>
-          ) : link ? (
-            <>
-              <p className="mt-2 truncate text-sm font-semibold text-[var(--text-primary)]">
-                Sent to {link.target_client_name ?? "client"}
-              </p>
-              <p className="mt-1 text-xs text-[var(--text-secondary)]">
-                {link.target_visit_label ? `Visit: ${link.target_visit_label}` : "No visit"} ·{" "}
-                {new Date(link.sent_at).toLocaleDateString("en-GB")}
-              </p>
-            </>
-          ) : (
-            <p className="mt-2 text-sm text-[var(--text-secondary)]">
-              {blockedReason ?? "Add this receipt to a client's job costs."}
-            </p>
-          )}
+      <p className="eyebrow">GardenWow</p>
+      <p className="mt-2 text-sm font-semibold text-[var(--text-primary)]">{headline}</p>
+      {detail ? (
+        <p
+          className={`mt-1 text-xs ${
+            link?.status === "failed" ? "text-[var(--danger)]" : "text-[var(--text-secondary)]"
+          }`}
+        >
+          {detail}
+        </p>
+      ) : null}
+
+      {state ? (
+        <div className="mt-4 flex flex-wrap gap-2">
+          {link?.status === "failed" || ((!link || link.status === "removed") && canSend) ? (
+            <button
+              type="button"
+              onClick={() => void send()}
+              disabled={blocked || !canSend}
+              className="rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-[var(--text-on-accent)] transition hover:bg-[var(--accent-strong)] disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {busy === "sending" ? "Sending..." : link?.status === "failed" ? "Retry" : "Send now"}
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => {
+              setMessage(null);
+              setIsPickerOpen(true);
+            }}
+            disabled={blocked}
+            className="secondary-button rounded-full px-4 py-2 text-sm transition disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            Change folder
+          </button>
+          {link?.status === "sent" ? (
+            <button
+              type="button"
+              onClick={() => void handleRemove()}
+              disabled={blocked}
+              className="secondary-button rounded-full px-4 py-2 text-sm transition disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {busy === "removing" ? "Removing..." : "Remove"}
+            </button>
+          ) : null}
         </div>
-        {linkLoaded ? (
-          link ? (
-            <button
-              type="button"
-              onClick={() => void handleUndo()}
-              disabled={isUndoing}
-              className="secondary-button shrink-0 rounded-full px-4 py-2 text-sm transition disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {isUndoing ? "Removing..." : "Undo"}
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={() => {
-                setMessage(null);
-                setIsPickerOpen(true);
-              }}
-              disabled={Boolean(blockedReason)}
-              className="shrink-0 rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-[var(--text-on-accent)] transition hover:bg-[var(--accent-strong)] disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              Send
-            </button>
-          )
-        ) : null}
-      </div>
+      ) : null}
+
+      {hasUnsavedChanges ? (
+        <p className="mt-3 text-xs text-[var(--text-secondary)]">
+          Save your changes first. GardenWow is updated when you save.
+        </p>
+      ) : null}
 
       {message ? (
         <p
@@ -164,15 +207,22 @@ export function GardenWowPanel({
       {isPickerOpen ? (
         <GardenWowPicker
           receiptDate={receiptDate}
-          receiptId={receiptId}
+          title="Choose a GardenWow folder"
           onClose={() => setIsPickerOpen(false)}
-          onSent={(nextLink, created) => {
-            setLink(nextLink);
+          onChoose={async (choice) => {
             setIsPickerOpen(false);
+            if (canSend) {
+              await send(choice);
+              return;
+            }
+            // Not complete yet: just remember where it should go.
+            const result = await sendReceiptToGardenWow(receiptId, choice);
+            const nextState = result.ok ? result.data : result.state;
+            if (nextState) {
+              setState(nextState);
+            }
             setMessage({
-              text: created
-                ? "Sent to GardenWow."
-                : "GardenWow already had this receipt, so nothing changed there.",
+              text: `It will go to ${describeTarget(choice)} once it has a date and total.`,
               tone: "info",
             });
           }}
@@ -182,16 +232,37 @@ export function GardenWowPanel({
   );
 }
 
-function GardenWowPicker({
+function linkTarget(link: NonNullable<GardenWowReceiptState["link"]>): GardenWowTarget {
+  return {
+    clientId: link.target_client_id,
+    clientName: link.target_client_name,
+    visitId: link.target_visit_id,
+    visitLabel: link.target_visit_label,
+  };
+}
+
+function describeTarget(target: GardenWowTarget | null) {
+  if (!target?.clientId) {
+    return "Unassigned";
+  }
+  const client = target.clientName ?? "the chosen client";
+  return target.visitLabel ? `${client} (visit ${target.visitLabel})` : client;
+}
+
+// Picks a destination: Unassigned, or a client (and, with withVisits, one of
+// their visits around the receipt date).
+export function GardenWowPicker({
+  onChoose,
   onClose,
-  onSent,
-  receiptDate,
-  receiptId,
+  receiptDate = null,
+  title,
+  withVisits = true,
 }: {
+  onChoose: (target: GardenWowTarget) => void | Promise<void>;
   onClose: () => void;
-  onSent: (link: GardenWowReceiptLink, created: boolean) => void;
-  receiptDate: string | null;
-  receiptId: string;
+  receiptDate?: string | null;
+  title: string;
+  withVisits?: boolean;
 }) {
   const [query, setQuery] = useState("");
   const [clients, setClients] = useState<GardenWowClient[]>([]);
@@ -200,7 +271,6 @@ function GardenWowPicker({
   const [visits, setVisits] = useState<GardenWowVisit[]>([]);
   const [isLoadingVisits, setIsLoadingVisits] = useState(false);
   const [selectedVisitId, setSelectedVisitId] = useState<string | null>(null);
-  const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -237,6 +307,11 @@ function GardenWowPicker({
   }, [onClose]);
 
   async function chooseClient(client: GardenWowClient) {
+    if (!withVisits) {
+      void onChoose({ clientId: client.id, clientName: client.name, visitId: null, visitLabel: null });
+      return;
+    }
+
     setSelectedClient(client);
     setSelectedVisitId(null);
     setVisits([]);
@@ -251,31 +326,21 @@ function GardenWowPicker({
     }
   }
 
-  async function handleSend() {
+  function confirmClient() {
     if (!selectedClient) {
       return;
     }
     const visit = visits.find((item) => item.id === selectedVisitId) ?? null;
-
-    setIsSending(true);
-    setError(null);
-    const result = await sendReceiptToGardenWow(receiptId, {
+    void onChoose({
       clientId: selectedClient.id,
       clientName: selectedClient.name,
       visitId: visit?.id ?? null,
       visitLabel: visit ? formatVisitLabel(visit) : null,
     });
-    setIsSending(false);
-
-    if (!result.ok) {
-      setError(result.error);
-      return;
-    }
-    onSent(result.data.link, result.data.created);
   }
 
   return (
-    <section className="fixed inset-0 z-[75] bg-[rgba(5,10,18,0.46)]" onClick={onClose}>
+    <section className="fixed inset-0 z-[75] bg-[rgba(5,10,18,0.46)] text-[var(--text-primary)]" onClick={onClose}>
       <div className="flex min-h-dvh items-end justify-center px-4 pb-[calc(env(safe-area-inset-bottom,0px)+16px)]">
         <div
           className="glass-panel flex max-h-[80dvh] w-full max-w-md flex-col rounded-[30px] p-4"
@@ -296,9 +361,7 @@ function GardenWowPicker({
             ) : (
               <span />
             )}
-            <p className="text-sm font-semibold text-[var(--text-primary)]">
-              {selectedClient ? "Pick a visit" : "Send to GardenWow"}
-            </p>
+            <p className="text-sm font-semibold">{selectedClient ? "Pick a visit" : title}</p>
             <button
               type="button"
               onClick={onClose}
@@ -310,13 +373,17 @@ function GardenWowPicker({
 
           {!selectedClient ? (
             <>
+              <PickerRow
+                onClick={() => void onChoose({ clientId: null, clientName: null, visitId: null, visitLabel: null })}
+                subtitle="The office files it into a client's folder later"
+                title="Unassigned (sort later)"
+              />
               <input
                 type="search"
-                autoFocus
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="Client name, email or postcode"
-                className="field-control mt-4 w-full rounded-2xl px-4 py-3 text-sm outline-none"
+                placeholder="Or find a client: name, email or postcode"
+                className="field-control mt-3 w-full rounded-2xl px-4 py-3 text-sm outline-none"
               />
               <div className="mt-3 min-h-0 flex-1 overflow-y-auto">
                 {isSearching && clients.length === 0 ? (
@@ -370,11 +437,11 @@ function GardenWowPicker({
               </div>
               <button
                 type="button"
-                onClick={() => void handleSend()}
-                disabled={isSending || isLoadingVisits}
+                onClick={confirmClient}
+                disabled={isLoadingVisits}
                 className="mt-4 w-full rounded-full bg-[var(--accent)] px-5 py-3 text-sm font-semibold text-[var(--text-on-accent)] transition hover:bg-[var(--accent-strong)] disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {isSending ? "Sending..." : `Send to ${selectedClient.name}`}
+                {`Use ${selectedClient.name}`}
               </button>
             </>
           )}
@@ -401,7 +468,7 @@ function PickerRow({
     <button
       type="button"
       onClick={onClick}
-      className={`w-full rounded-[22px] px-4 py-3 text-left transition ${
+      className={`mt-1 w-full rounded-[22px] px-4 py-3 text-left transition ${
         selected ? "bg-[var(--surface-soft)]" : "hover:bg-[var(--nav-hover)]"
       }`}
     >

@@ -4,6 +4,8 @@ import {
   getSupabaseAdminClient,
   supabaseServerEnvError,
 } from "@/lib/supabase/server";
+import { isGardenWowEnabledForUser } from "@/lib/gardenwow/server";
+import { removeReceiptFromGardenWow, syncReceiptToGardenWow } from "@/lib/gardenwow/sync";
 
 type RouteContext = {
   params: Promise<{
@@ -88,7 +90,14 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     return NextResponse.json({ error: error.message }, { status: 400 });
   }
 
-  return NextResponse.json({ ok: true });
+  // GardenWow accounts: send it now that it may be complete, or replace the
+  // copy GardenWow has if the details changed.
+  const gardenwow = await syncReceiptToGardenWow(supabase, id, authResult.data.id);
+
+  return NextResponse.json({
+    ok: true,
+    gardenwow: gardenwow.state === "disabled" ? undefined : gardenwow,
+  });
 }
 
 export async function DELETE(request: NextRequest, context: RouteContext) {
@@ -126,6 +135,20 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
 
   if (receiptError || !receipt) {
     return NextResponse.json({ error: "Receipt not found." }, { status: 404 });
+  }
+
+  // Take it out of GardenWow first, so deleting a duplicate photo doesn't
+  // leave a duplicate cost behind there.
+  if (isGardenWowEnabledForUser(authResult.data.id)) {
+    const removed = await removeReceiptFromGardenWow(supabase, id, authResult.data.id, {
+      forget: true,
+    });
+    if (!removed.ok) {
+      return NextResponse.json(
+        { error: `Couldn't remove it from GardenWow, so it wasn't deleted: ${removed.message}` },
+        { status: 502 },
+      );
+    }
   }
 
   const { error: storageError } = await supabase.storage

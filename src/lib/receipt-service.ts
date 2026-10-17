@@ -15,6 +15,8 @@ import type {
 type SaveReceiptInput = {
   blob: Blob;
   folderId: string | null;
+  // GardenWow client chosen on the camera screen; none = Unassigned.
+  gardenwowClient?: { clientId: string; clientName: string } | null;
   userId: string;
 };
 
@@ -67,6 +69,7 @@ export async function createFolder(
 export async function saveReceipt({
   blob,
   folderId,
+  gardenwowClient = null,
   userId,
 }: SaveReceiptInput): Promise<Result<{ id: string }>> {
   const supabase = getSupabaseBrowserClient();
@@ -106,7 +109,17 @@ export async function saveReceipt({
     extraction_error: null,
   };
 
-  const { error: insertError } = await supabase.from("receipts").insert(payload);
+  // Only include the GardenWow columns when a client was chosen, so saving
+  // works the same as before for everyone else.
+  const { error: insertError } = await supabase.from("receipts").insert(
+    gardenwowClient
+      ? {
+          ...payload,
+          gardenwow_client_id: gardenwowClient.clientId,
+          gardenwow_client_name: gardenwowClient.clientName,
+        }
+      : payload,
+  );
 
   if (insertError) {
     await supabase.storage.from("receipts").remove([imagePath]);

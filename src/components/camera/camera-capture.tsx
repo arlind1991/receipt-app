@@ -8,7 +8,9 @@ import {
   getLastUsedFolderId,
   setLastUsedFolderId,
 } from "@/lib/local-storage";
+import { GardenWowPicker } from "@/components/receipts/gardenwow-panel";
 import { acquireCameraStream, pauseCameraStream } from "@/lib/camera-stream";
+import { getCaptureTarget, isGardenWowEnabled, setCaptureTarget } from "@/lib/gardenwow/client";
 import { fetchFolders, saveReceipt } from "@/lib/receipt-service";
 import { ensureBrowserSession, supabaseEnvError } from "@/lib/supabase/session";
 import type { ReceiptProcessingQueueItem } from "@/lib/types";
@@ -43,6 +45,12 @@ export function CameraCapture() {
     front: null,
   });
   const [selectedFolderId, setSelectedFolderId] = useState(UNSORTED_FOLDER_ID);
+  const [isGardenWowOn, setIsGardenWowOn] = useState(false);
+  const [gardenWowClient, setGardenWowClient] = useState<{
+    clientId: string;
+    clientName: string;
+  } | null>(null);
+  const [isGardenWowPickerOpen, setIsGardenWowPickerOpen] = useState(false);
   const [isCameraReady, setIsCameraReady] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submissionLabel, setSubmissionLabel] = useState<string | null>(null);
@@ -80,6 +88,13 @@ export function CameraCapture() {
     if (!user) {
       return;
     }
+
+    void isGardenWowEnabled(user.id).then((enabled) => {
+      setIsGardenWowOn(enabled);
+      if (enabled) {
+        setGardenWowClient(getCaptureTarget());
+      }
+    });
 
     const result = await fetchFolders(user.id);
     if (!result.ok) {
@@ -406,6 +421,7 @@ export function CameraCapture() {
         const saveResult = await saveReceipt({
           blob,
           folderId,
+          gardenwowClient: isGardenWowOn ? gardenWowClient : null,
           userId: user.id,
         });
         if (!saveResult.ok) {
@@ -480,7 +496,37 @@ export function CameraCapture() {
             <span aria-hidden="true" className="mr-1 text-[1.3rem] leading-none">&lsaquo;</span>
             Receipts
           </button>
+          {isGardenWowOn ? (
+            <button
+              type="button"
+              onClick={() => setIsGardenWowPickerOpen(true)}
+              disabled={isSubmitting}
+              className="absolute top-0 right-4 inline-flex min-h-10 max-w-[60%] items-center rounded-full bg-black/32 px-3 text-sm font-medium text-white/92 backdrop-blur-md transition hover:text-white disabled:opacity-60"
+            >
+              <span className="truncate">
+                GardenWow: {gardenWowClient?.clientName ?? "Unassigned"}
+              </span>
+              <span aria-hidden="true" className="ml-1 text-xs">▾</span>
+            </button>
+          ) : null}
         </div>
+
+        {isGardenWowPickerOpen ? (
+          <GardenWowPicker
+            title="Save new receipts to"
+            withVisits={false}
+            onClose={() => setIsGardenWowPickerOpen(false)}
+            onChoose={(choice) => {
+              const next =
+                choice.clientId && choice.clientName
+                  ? { clientId: choice.clientId, clientName: choice.clientName }
+                  : null;
+              setGardenWowClient(next);
+              setCaptureTarget(next);
+              setIsGardenWowPickerOpen(false);
+            }}
+          />
+        ) : null}
 
         <div className="absolute inset-x-0 top-[calc(env(safe-area-inset-top,0px)+52px)] z-20 flex justify-center px-6">
           <ModeSelector

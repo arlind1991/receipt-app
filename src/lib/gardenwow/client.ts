@@ -1,8 +1,8 @@
 import { getAccessToken } from "@/lib/receipt-service";
 import type {
   GardenWowClient,
-  GardenWowReceiptLink,
-  GardenWowSendInput,
+  GardenWowReceiptState,
+  GardenWowTarget,
   GardenWowVisit,
 } from "@/lib/gardenwow/types";
 import type { Result } from "@/lib/types";
@@ -12,7 +12,9 @@ import type { Result } from "@/lib/types";
 
 const enabledByUser = new Map<string, Promise<boolean>>();
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<Result<T>> {
+type Failure = { ok: false; error: string; state?: GardenWowReceiptState };
+
+async function request<T>(path: string, init: RequestInit = {}): Promise<{ ok: true; data: T } | Failure> {
   const accessToken = await getAccessToken();
   if (!accessToken) {
     return { ok: false, error: "You need to sign in first." };
@@ -27,10 +29,17 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<Result<
         Authorization: `Bearer ${accessToken}`,
       },
     });
-    const json = (await response.json().catch(() => null)) as (T & { error?: string }) | null;
+    const json = (await response.json().catch(() => null)) as
+      | (T & { error?: string } & Partial<GardenWowReceiptState>)
+      | null;
 
     if (!response.ok || !json) {
-      return { ok: false, error: json?.error ?? "Something went wrong talking to GardenWow." };
+      return {
+        ok: false,
+        error: json?.error ?? "Something went wrong talking to GardenWow.",
+        // Send/retry failures still return the receipt's current state.
+        state: json && "target" in json ? (json as unknown as GardenWowReceiptState) : undefined,
+      };
     }
 
     return { ok: true, data: json };
@@ -57,7 +66,7 @@ export function isGardenWowEnabled(userId: string) {
   return enabled;
 }
 
-export async function searchGardenWowClients(query: string) {
+export async function searchGardenWowClients(query: string): Promise<Result<GardenWowClient[]>> {
   const params = new URLSearchParams();
   if (query.trim()) {
     params.set("q", query.trim());
@@ -65,10 +74,13 @@ export async function searchGardenWowClients(query: string) {
   const result = await request<{ clients: GardenWowClient[] }>(
     `/api/integrations/gardenwow/clients${params.size ? `?${params}` : ""}`,
   );
-  return result.ok ? { ok: true as const, data: result.data.clients } : result;
+  return result.ok ? { ok: true, data: result.data.clients } : result;
 }
 
-export async function listGardenWowVisits(clientId: string, around: string | null) {
+export async function listGardenWowVisits(
+  clientId: string,
+  around: string | null,
+): Promise<Result<GardenWowVisit[]>> {
   const params = new URLSearchParams();
   if (around) {
     params.set("around", around);
@@ -78,27 +90,52 @@ export async function listGardenWowVisits(clientId: string, around: string | nul
       params.size ? `?${params}` : ""
     }`,
   );
-  return result.ok ? { ok: true as const, data: result.data.visits } : result;
+  return result.ok ? { ok: true, data: result.data.visits } : result;
 }
 
-export async function fetchGardenWowLink(receiptId: string) {
-  const result = await request<{ link: GardenWowReceiptLink | null }>(
-    `/api/receipts/${receiptId}/gardenwow`,
-  );
-  return result.ok ? { ok: true as const, data: result.data.link } : result;
+export async function fetchGardenWowState(receiptId: string) {
+  return request<GardenWowReceiptState>(`/api/receipts/${receiptId}/gardenwow`);
 }
 
-export async function sendReceiptToGardenWow(receiptId: string, input: GardenWowSendInput) {
-  const result = await request<{ created: boolean; link: GardenWowReceiptLink }>(
-    `/api/receipts/${receiptId}/gardenwow`,
-    { method: "POST", body: JSON.stringify(input) },
-  );
-  return result.ok ? { ok: true as const, data: result.data } : result;
+// Sends now. With a target, also changes where it goes; without one, retries
+// with the current destination.
+export async function sendReceiptToGardenWow(receiptId: string, target?: GardenWowTarget) {
+  return request<GardenWowReceiptState & { outcome: string }>(`/api/receipts/${receiptId}/gardenwow`, {
+    method: "POST",
+    body: JSON.stringify(target ?? {}),
+  });
 }
 
-export async function undoGardenWowSend(receiptId: string) {
-  const result = await request<{ ok: true }>(`/api/receipts/${receiptId}/gardenwow`, {
+export async function removeReceiptFromGardenWow(receiptId: string) {
+  return request<GardenWowReceiptState>(`/api/receipts/${receiptId}/gardenwow`, {
     method: "DELETE",
   });
-  return result.ok ? { ok: true as const, data: undefined } : result;
+}
+
+// The client chosen on the camera screen for new receipts. Kept for this app
+// session only, so each time the app is opened it starts at Unassigned.
+const CAPTURE_TARGET_KEY = "snapreceipt.gardenwow.captureTarget";
+
+export function getCaptureTarget(): { clientId: string; clientName: string } | null {
+  try {
+    const stored = window.sessionStorage.getItem(CAPTURE_TARGET_KEY);
+    const parsed = stored ? (JSON.parse(stored) as { clientId?: unknown; clientName?: unknown }) : null;
+    return parsed && typeof parsed.clientId === "string" && typeof parsed.clientName === "string"
+      ? { clientId: parsed.clientId, clientName: parsed.clientName }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+export function setCaptureTarget(target: { clientId: string; clientName: string } | null) {
+  try {
+    if (target) {
+      window.sessionStorage.setItem(CAPTURE_TARGET_KEY, JSON.stringify(target));
+    } else {
+      window.sessionStorage.removeItem(CAPTURE_TARGET_KEY);
+    }
+  } catch {
+    // Private mode or storage blocked: the choice just won't be remembered.
+  }
 }

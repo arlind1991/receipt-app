@@ -108,29 +108,31 @@ async function callGardenWow(path: string, init: RequestInit = {}): Promise<Gard
   return { status: response.status, body };
 }
 
-// Turns any GardenWow failure (or a network error) into a response for the
-// browser. The integration key itself is never echoed back.
-export function gardenWowErrorResponse(result: GardenWowResponse | Error) {
+// Turns any GardenWow failure (or a network error) into a message for the
+// user and a status for our own response. The integration key is never echoed.
+export function describeGardenWowFailure(result: GardenWowResponse | Error): {
+  message: string;
+  status: number;
+} {
   if (result instanceof Error) {
     const timedOut = result.name === "TimeoutError" || result.name === "AbortError";
     console.warn("[gardenwow:network]", { reason: result.message });
-    return NextResponse.json(
-      {
-        error: timedOut
-          ? "GardenWow took too long to respond. Please try again."
-          : "Could not reach GardenWow. Please try again.",
-      },
-      { status: 502 },
-    );
+    return {
+      message: timedOut
+        ? "GardenWow took too long to respond. Please try again."
+        : "Could not reach GardenWow. Please try again.",
+      status: 502,
+    };
   }
 
   console.warn("[gardenwow:error]", { body: result.body, status: result.status });
 
   if (result.status === 401 || result.body?.error === "not_configured") {
-    return NextResponse.json(
-      { error: "The GardenWow integration isn't configured correctly. Check the API key on both sides." },
-      { status: 502 },
-    );
+    return {
+      message:
+        "The GardenWow integration isn't configured correctly. Check the API key on both sides.",
+      status: 502,
+    };
   }
 
   if (result.status === 400) {
@@ -141,33 +143,36 @@ export function gardenWowErrorResponse(result: GardenWowResponse | Error) {
             ([field, message]) => `${field}: ${String(message)}`,
           )
         : [];
-    return NextResponse.json(
-      {
-        error: fieldMessages.length
-          ? `GardenWow rejected the receipt (${fieldMessages.join("; ")}).`
-          : `GardenWow rejected the request${
-              typeof result.body?.error === "string" ? `: ${result.body.error}` : "."
-            }`,
-      },
-      { status: 400 },
-    );
+    return {
+      message: fieldMessages.length
+        ? `GardenWow rejected the receipt (${fieldMessages.join("; ")}).`
+        : `GardenWow rejected the request${
+            typeof result.body?.error === "string" ? `: ${result.body.error}` : "."
+          }`,
+      status: 400,
+    };
   }
 
   if (result.status === 404) {
-    return NextResponse.json({ error: "Not found in GardenWow." }, { status: 404 });
+    return { message: "Not found in GardenWow.", status: 404 };
   }
 
   if (result.status === 422) {
-    return NextResponse.json(
-      { error: "GardenWow can't use that client or visit. Pick another and try again." },
-      { status: 422 },
-    );
+    return {
+      message: "GardenWow can't use that client or visit. Pick another and try again.",
+      status: 422,
+    };
   }
 
-  return NextResponse.json(
-    { error: "GardenWow had a problem. Nothing was saved there; please try again." },
-    { status: 502 },
-  );
+  return {
+    message: "GardenWow had a problem. Nothing was saved there; please try again.",
+    status: 502,
+  };
+}
+
+export function gardenWowErrorResponse(result: GardenWowResponse | Error) {
+  const { message, status } = describeGardenWowFailure(result);
+  return NextResponse.json({ error: message }, { status });
 }
 
 export async function searchGardenWowClients(query: string) {
@@ -202,7 +207,8 @@ export async function listGardenWowVisits(clientId: string, around: string | nul
 
 export type GardenWowReceiptPayload = {
   externalId: string;
-  clientId: string;
+  // null = the Unassigned folder.
+  clientId: string | null;
   visitId: string | null;
   merchant: string | null;
   receiptDate: string;
@@ -221,8 +227,8 @@ export async function sendGardenWowReceipt(payload: GardenWowReceiptPayload) {
     payload.photo.filename,
   );
   form.set("externalId", payload.externalId);
-  form.set("clientId", payload.clientId);
-  if (payload.visitId) form.set("visitId", payload.visitId);
+  if (payload.clientId) form.set("clientId", payload.clientId);
+  if (payload.clientId && payload.visitId) form.set("visitId", payload.visitId);
   if (payload.merchant) form.set("merchant", payload.merchant);
   form.set("receiptDate", payload.receiptDate);
   form.set("totalPence", String(payload.totalPence));
@@ -287,14 +293,17 @@ export async function prepareGardenWowPhoto(bytes: Buffer) {
   };
 }
 
+export const LINK_SELECT =
+  "external_id, target_client_id, target_client_name, target_visit_id, target_visit_label, sent_at, status, last_error, sent_hash";
+
 export async function fetchGardenWowLink(supabase: AdminClient, receiptId: string, userId: string) {
   return supabase
     .from("receipt_external_links")
-    .select(
-      "external_id, target_client_id, target_client_name, target_visit_id, target_visit_label, sent_at",
-    )
+    .select(LINK_SELECT)
     .eq("receipt_id", receiptId)
     .eq("user_id", userId)
     .eq("provider", "gardenwow")
     .maybeSingle();
 }
+
+export type { AdminClient };

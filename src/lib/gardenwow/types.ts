@@ -17,18 +17,32 @@ export type GardenWowVisit = {
   address: string | null;
 };
 
+// What GardenWow has for a receipt. target_client_id null = Unassigned.
 export type GardenWowReceiptLink = {
   external_id: string;
-  target_client_id: string;
+  target_client_id: string | null;
   target_client_name: string | null;
   target_visit_id: string | null;
   target_visit_label: string | null;
   sent_at: string;
+  status: "sent" | "failed" | "removed";
+  last_error: string | null;
+  sent_hash: string | null;
 };
 
-export type GardenWowSendInput = {
-  clientId: string;
+// Where a receipt should go. clientId null = the Unassigned folder.
+export type GardenWowTarget = {
+  clientId: string | null;
   clientName: string | null;
   visitId: string | null;
   visitLabel: string | null;
+};
+
+export type GardenWowSendInput = GardenWowTarget;
+
+export type GardenWowReceiptState = {
+  link: GardenWowReceiptLink | null;
+  target: GardenWowTarget;
+  // Fields the platform needs before the receipt can be sent.
+  missing: Array<"date" | "total">;
 };

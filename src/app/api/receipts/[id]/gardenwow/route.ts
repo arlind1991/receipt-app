@@ -1,14 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
+import { authorizeGardenWowRequest } from "@/lib/gardenwow/server";
 import {
-  authorizeGardenWowRequest,
-  deleteGardenWowReceipt,
-  fetchGardenWowLink,
-  gardenWowErrorResponse,
-  prepareGardenWowPhoto,
-  sendGardenWowReceipt,
-  toPence,
-} from "@/lib/gardenwow/server";
-import type { GardenWowReceiptLink, GardenWowSendInput } from "@/lib/gardenwow/types";
+  getGardenWowState,
+  removeReceiptFromGardenWow,
+  setGardenWowTarget,
+  syncReceiptToGardenWow,
+  type SyncOutcome,
+} from "@/lib/gardenwow/sync";
+import type { GardenWowSendInput } from "@/lib/gardenwow/types";
 
 type Context = {
   params: Promise<{
@@ -16,18 +15,7 @@ type Context = {
   }>;
 };
 
-type ReceiptForGardenWow = {
-  id: string;
-  image_path: string;
-  merchant_name: string | null;
-  receipt_date: string | null;
-  total_amount: number | null;
-  vat_amount: number | null;
-  currency: string | null;
-  notes: string | null;
-};
-
-// Where (if anywhere) this receipt has been sent in GardenWow.
+// Where this receipt is meant to go and what GardenWow has for it.
 export async function GET(request: NextRequest, context: Context) {
   const auth = await authorizeGardenWowRequest(request);
   if (!auth.ok) {
@@ -35,15 +23,15 @@ export async function GET(request: NextRequest, context: Context) {
   }
 
   const { id } = await context.params;
-  const { data, error } = await fetchGardenWowLink(auth.supabase, id, auth.userId);
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  const state = await getGardenWowState(auth.supabase, id, auth.userId);
+  if (!state) {
+    return NextResponse.json({ error: "Receipt not found." }, { status: 404 });
   }
-
-  return NextResponse.json({ link: (data as GardenWowReceiptLink | null) ?? null });
+  return NextResponse.json(state);
 }
 
-// Sends the receipt to a GardenWow client (and optionally one of their visits).
+// Sets the destination (clientId null = Unassigned) and sends the receipt now,
+// replacing any copy already in GardenWow. Also used to retry a failed send.
 export async function POST(request: NextRequest, context: Context) {
   const auth = await authorizeGardenWowRequest(request);
   if (!auth.ok) {
@@ -51,149 +39,33 @@ export async function POST(request: NextRequest, context: Context) {
   }
 
   const input = (await request.json().catch(() => null)) as Partial<GardenWowSendInput> | null;
-  const clientId = normalizeId(input?.clientId);
-  const visitId = normalizeId(input?.visitId);
-  if (!clientId) {
-    return NextResponse.json({ error: "Choose a GardenWow client." }, { status: 400 });
+  if (input?.clientId !== undefined && input.clientId !== null && !normalizeId(input.clientId)) {
+    return NextResponse.json({ error: "That GardenWow client isn't valid." }, { status: 400 });
   }
 
   const { id } = await context.params;
   const { supabase, userId } = auth;
 
-  const { data: receipt, error: receiptError } = await supabase
-    .from("receipts")
-    .select("id, image_path, merchant_name, receipt_date, total_amount, vat_amount, currency, notes")
-    .eq("id", id)
-    .eq("user_id", userId)
-    .maybeSingle<ReceiptForGardenWow>();
-
-  if (receiptError || !receipt) {
-    return NextResponse.json({ error: "Receipt not found." }, { status: 404 });
-  }
-
-  const existing = await fetchGardenWowLink(supabase, receipt.id, userId);
-  if (existing.error) {
-    return NextResponse.json({ error: existing.error.message }, { status: 500 });
-  }
-  if (existing.data) {
-    const link = existing.data as GardenWowReceiptLink;
-    return NextResponse.json(
-      {
-        error: `Already sent to ${link.target_client_name ?? "a GardenWow client"}. Undo that first to send it somewhere else.`,
-        link,
-      },
-      { status: 409 },
-    );
-  }
-
-  if (!receipt.receipt_date || !/^\d{4}-\d{2}-\d{2}$/.test(receipt.receipt_date)) {
-    return NextResponse.json(
-      { error: "Add the receipt date and save before sending to GardenWow." },
-      { status: 400 },
-    );
-  }
-  if (receipt.total_amount == null || !Number.isFinite(Number(receipt.total_amount))) {
-    return NextResponse.json(
-      { error: "Add the receipt total and save before sending to GardenWow." },
-      { status: 400 },
-    );
-  }
-
-  const totalPence = toPence(Number(receipt.total_amount));
-  const vatPence =
-    receipt.vat_amount != null && Number.isFinite(Number(receipt.vat_amount))
-      ? toPence(Number(receipt.vat_amount))
-      : null;
-  if (vatPence != null && vatPence > totalPence) {
-    return NextResponse.json(
-      { error: "The VAT amount is more than the total. Fix it and save before sending." },
-      { status: 400 },
-    );
-  }
-
-  const { data: image, error: downloadError } = await supabase.storage
-    .from("receipts")
-    .download(receipt.image_path);
-  if (downloadError || !image) {
-    return NextResponse.json(
-      { error: downloadError?.message ?? "The receipt image could not be loaded." },
-      { status: 500 },
-    );
-  }
-
-  let photo: Awaited<ReturnType<typeof prepareGardenWowPhoto>>;
-  try {
-    photo = await prepareGardenWowPhoto(Buffer.from(await image.arrayBuffer()));
-  } catch (error) {
-    console.warn("[gardenwow:photo]", {
-      reason: error instanceof Error ? error.message : String(error),
-      receipt_id: receipt.id,
-    });
-    return NextResponse.json(
-      { error: "The receipt image couldn't be converted for GardenWow." },
-      { status: 500 },
-    );
-  }
-
-  const currency = receipt.currency?.trim().toUpperCase();
-
-  let sendResult: Awaited<ReturnType<typeof sendGardenWowReceipt>>;
-  try {
-    sendResult = await sendGardenWowReceipt({
-      externalId: receipt.id,
+  if (input && "clientId" in input) {
+    const clientId = normalizeId(input.clientId);
+    const visitId = clientId ? normalizeId(input.visitId) : null;
+    const { error } = await setGardenWowTarget(supabase, id, userId, {
       clientId,
+      clientName: clientId ? normalizeLabel(input.clientName) : null,
       visitId,
-      merchant: receipt.merchant_name?.trim().slice(0, 200) || null,
-      receiptDate: receipt.receipt_date,
-      totalPence,
-      vatPence,
-      currency: currency && /^[A-Z]{3}$/.test(currency) ? currency : "GBP",
-      notes: receipt.notes?.trim().slice(0, 2000) || null,
-      photo,
+      visitLabel: visitId ? normalizeLabel(input.visitLabel) : null,
     });
-  } catch (error) {
-    return gardenWowErrorResponse(error as Error);
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
   }
 
-  if (!sendResult.ok) {
-    return gardenWowErrorResponse(sendResult.result);
-  }
-
-  // created=false means GardenWow already had this receipt (a retry after we
-  // failed to record the link). Nothing changed there; record it so the UI
-  // shows it as sent and it can be undone.
-  const { data: link, error: linkError } = await supabase
-    .from("receipt_external_links")
-    .insert({
-      external_id: receipt.id,
-      provider: "gardenwow",
-      receipt_id: receipt.id,
-      target_client_id: clientId,
-      target_client_name: normalizeLabel(input?.clientName),
-      target_visit_id: visitId,
-      target_visit_label: visitId ? normalizeLabel(input?.visitLabel) : null,
-      user_id: userId,
-    })
-    .select(
-      "external_id, target_client_id, target_client_name, target_visit_id, target_visit_label, sent_at",
-    )
-    .single<GardenWowReceiptLink>();
-
-  if (linkError) {
-    console.warn("[gardenwow:link]", { reason: linkError.message, receipt_id: receipt.id });
-    return NextResponse.json(
-      {
-        error:
-          "Sent to GardenWow, but SnapReceipt couldn't record it. Send again to record it; GardenWow won't duplicate it.",
-      },
-      { status: 500 },
-    );
-  }
-
-  return NextResponse.json({ created: sendResult.created, link });
+  const outcome = await syncReceiptToGardenWow(supabase, id, userId, { restore: true });
+  const state = await getGardenWowState(supabase, id, userId);
+  return respond(outcome, state);
 }
 
-// Removes the receipt from GardenWow and forgets the link.
+// Removes the receipt from GardenWow; it won't be sent again automatically.
 export async function DELETE(request: NextRequest, context: Context) {
   const auth = await authorizeGardenWowRequest(request);
   if (!auth.ok) {
@@ -201,38 +73,32 @@ export async function DELETE(request: NextRequest, context: Context) {
   }
 
   const { id } = await context.params;
-  const { supabase, userId } = auth;
-
-  const existing = await fetchGardenWowLink(supabase, id, userId);
-  if (existing.error) {
-    return NextResponse.json({ error: existing.error.message }, { status: 500 });
-  }
-  if (!existing.data) {
-    return NextResponse.json({ error: "This receipt hasn't been sent to GardenWow." }, { status: 404 });
+  const result = await removeReceiptFromGardenWow(auth.supabase, id, auth.userId);
+  if (!result.ok) {
+    return NextResponse.json({ error: result.message }, { status: result.status });
   }
 
-  const link = existing.data as GardenWowReceiptLink;
-  try {
-    const result = await deleteGardenWowReceipt(link.external_id);
-    if (!result.ok) {
-      return gardenWowErrorResponse(result.result);
-    }
-  } catch (error) {
-    return gardenWowErrorResponse(error as Error);
+  const state = await getGardenWowState(auth.supabase, id, auth.userId);
+  return NextResponse.json({ ok: true, ...state });
+}
+
+function respond(outcome: SyncOutcome, state: Awaited<ReturnType<typeof getGardenWowState>>) {
+  switch (outcome.state) {
+    case "not_found":
+      return NextResponse.json({ error: "Receipt not found." }, { status: 404 });
+    case "failed":
+      return NextResponse.json({ error: outcome.message, ...state }, { status: outcome.status });
+    case "waiting":
+      return NextResponse.json(
+        {
+          error: `Add the ${outcome.missing.join(" and ")} and save first. It will be sent automatically.`,
+          ...state,
+        },
+        { status: 400 },
+      );
+    default:
+      return NextResponse.json({ outcome: outcome.state, ...state });
   }
-
-  const { error: deleteError } = await supabase
-    .from("receipt_external_links")
-    .delete()
-    .eq("receipt_id", id)
-    .eq("user_id", userId)
-    .eq("provider", "gardenwow");
-
-  if (deleteError) {
-    return NextResponse.json({ error: deleteError.message }, { status: 500 });
-  }
-
-  return NextResponse.json({ ok: true });
 }
 
 function normalizeId(value: unknown) {

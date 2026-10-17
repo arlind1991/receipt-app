@@ -415,7 +415,7 @@ export function ReceiptDetailClient({ receiptId }: ReceiptDetailClientProps) {
                 hasUnsavedChanges={isDirty}
                 receiptDate={receipt.receipt_date}
                 receiptId={receipt.id}
-                totalAmount={receipt.total_amount}
+                refreshKey={receipt.updated_at}
                 userId={receipt.user_id}
               />
             ) : (
