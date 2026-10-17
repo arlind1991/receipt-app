@@ -2,13 +2,19 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   extractReceiptDataFromImage,
   getReceiptOcrModels,
+  type ReceiptProcessingOutput,
 } from "@/lib/receipt-ocr";
 import { preprocessReceiptImageForOcr } from "@/lib/receipt-image-processing";
+import { extractReceiptDataWithClaude, CLAUDE_RECEIPT_MODEL } from "@/lib/receipt-ocr-claude";
+import { convertHeicToJpeg } from "@/lib/image-format";
 import {
   getAuthenticatedUserFromAccessToken,
   getSupabaseAdminClient,
   supabaseServerEnvError,
 } from "@/lib/supabase/server";
+
+const receiptOcrProvider =
+  process.env.RECEIPT_OCR_PROVIDER?.trim().toLowerCase() === "openai" ? "openai" : "anthropic";
 
 type RouteContext = {
   params: Promise<{
@@ -60,7 +66,11 @@ export async function POST(request: NextRequest, context: RouteContext) {
   const { ocrModel, structuredModel } = getReceiptOcrModels();
   console.info("[receipt-processing:start]", {
     image_path: receipt.image_path,
-    models: { ocrModel, structuredModel },
+    models:
+      receiptOcrProvider === "anthropic"
+        ? { model: CLAUDE_RECEIPT_MODEL }
+        : { ocrModel, structuredModel },
+    provider: receiptOcrProvider,
     receipt_id: receipt.id,
   });
 
@@ -89,21 +99,18 @@ export async function POST(request: NextRequest, context: RouteContext) {
     receipt_id: receipt.id,
   });
 
-  const originalImageBuffer = Buffer.from(arrayBuffer);
-  const originalContentType = image.type || "image/jpeg";
-  const preprocessing = await preprocessReceiptImageForOcr({
-    contentType: originalContentType,
-    imageBuffer: originalImageBuffer,
-  });
+  // HEIC can't be decoded by sharp or read by either model, so convert it first.
+  const originalImageBuffer = (await convertHeicToJpeg(Buffer.from(arrayBuffer))).bytes;
+  const originalContentType = "image/jpeg";
 
-  const extractionResult = await extractReceiptDataFromImage({
-    contentType: preprocessing.contentType,
-    imageBuffer: preprocessing.ocrBuffer,
-    imageDownloadSucceeded: true,
-    originalContentType,
-    originalImageBuffer,
-    preprocessing: preprocessing.debug,
-  });
+  let extractionResult: ExtractionResult;
+  try {
+    extractionResult = await runReceiptExtraction(originalImageBuffer, originalContentType);
+  } catch (error) {
+    const reason = `The receipt image couldn't be processed: ${error instanceof Error ? error.message : String(error)}`;
+    await markReceiptFailed(supabase, receipt.id, reason);
+    return NextResponse.json({ error: reason }, { status: 500 });
+  }
 
   if (!extractionResult.ok) {
     console.warn("[receipt-processing:exception]", {
@@ -219,6 +226,31 @@ export async function POST(request: NextRequest, context: RouteContext) {
     },
     partial: extractionResult.data.is_partial,
     status: nextStatus,
+  });
+}
+
+// RECEIPT_OCR_PROVIDER: "anthropic" (default) reads the photo with Claude in one
+// call; "openai" keeps the previous two-step OpenAI pipeline as a fallback.
+type ExtractionResult =
+  | { ok: true; data: ReceiptProcessingOutput }
+  | { ok: false; error: string; data: ReceiptProcessingOutput };
+
+async function runReceiptExtraction(
+  imageBuffer: Buffer,
+  contentType: string,
+): Promise<ExtractionResult> {
+  if (receiptOcrProvider === "anthropic") {
+    return extractReceiptDataWithClaude({ imageBuffer });
+  }
+
+  const preprocessing = await preprocessReceiptImageForOcr({ contentType, imageBuffer });
+  return extractReceiptDataFromImage({
+    contentType: preprocessing.contentType,
+    imageBuffer: preprocessing.ocrBuffer,
+    imageDownloadSucceeded: true,
+    originalContentType: contentType,
+    originalImageBuffer: imageBuffer,
+    preprocessing: preprocessing.debug,
   });
 }
 

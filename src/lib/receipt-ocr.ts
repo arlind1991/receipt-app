@@ -16,7 +16,7 @@ type ParsedReceiptPayload = StructuredReceiptFields & {
   };
   raw_ocr_text: string;
 };
-type OpenAiStageDebug = {
+export type OpenAiStageDebug = {
   assistant_text: string;
   empty_reason: string | null;
   image_input_sent: boolean;
@@ -34,7 +34,7 @@ type HeuristicDebug = {
   candidate_vat_line: string | null;
   receipt_time: string | null;
 };
-type ReceiptProcessingOutput = ParsedReceiptPayload & {
+export type ReceiptProcessingOutput = ParsedReceiptPayload & {
   debug: {
     extracted_fields: string[];
     failure_stage: "none" | "ocr" | "structured" | "final";
@@ -195,7 +195,7 @@ function stripCodeFences(value: string) {
 }
 
 // e.g. "I'm sorry, but I can't read this image." Previously these were saved as the merchant name.
-function looksLikeRefusal(value: string) {
+export function looksLikeRefusal(value: string) {
   return value.length < 300 && /^(i'?m sorry|sorry,|i can(?:no|')t|i am unable|unable to)/i.test(value);
 }
 

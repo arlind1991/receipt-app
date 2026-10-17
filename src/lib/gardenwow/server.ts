@@ -1,7 +1,7 @@
 import "server-only";
 
-import convertHeic from "heic-convert";
 import sharp from "sharp";
+import { convertHeicToJpeg, sniffImageKind } from "@/lib/image-format";
 import { NextRequest, NextResponse } from "next/server";
 import {
   getAuthenticatedUserFromAccessToken,
@@ -255,51 +255,17 @@ export function toPence(value: number) {
   return Math.round(value * 100);
 }
 
-type PhotoKind = "jpeg" | "png" | "webp" | "isobmff" | "unknown";
-
-function sniffPhotoKind(bytes: Buffer): PhotoKind {
-  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
-    return "jpeg";
-  }
-  if (
-    bytes.length >= 8 &&
-    bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
-  ) {
-    return "png";
-  }
-  if (
-    bytes.length >= 12 &&
-    bytes.toString("ascii", 0, 4) === "RIFF" &&
-    bytes.toString("ascii", 8, 12) === "WEBP"
-  ) {
-    return "webp";
-  }
-  // HEIC/HEIF (and AVIF) files are ISO-BMFF containers starting with an ftyp box.
-  if (bytes.length >= 12 && bytes.toString("ascii", 4, 8) === "ftyp") {
-    return "isobmff";
-  }
-  return "unknown";
-}
-
-// GardenWow accepts JPEG, PNG or WebP up to 10 MB, checked by content. Stored
-// images are labelled image/jpeg whatever they really are, so go by the bytes:
-// HEIC is converted to JPEG, anything else unsupported or oversized is
-// re-encoded as JPEG.
+// GardenWow accepts JPEG, PNG or WebP up to 10 MB, checked by content: HEIC is
+// converted to JPEG, anything else unsupported or oversized is re-encoded as JPEG.
 export async function prepareGardenWowPhoto(bytes: Buffer) {
-  let kind = sniffPhotoKind(bytes);
-  let output = bytes;
+  const heic = await convertHeicToJpeg(bytes);
+  let output = heic.bytes;
+  let kind = sniffImageKind(output);
 
-  if (kind === "isobmff") {
-    try {
-      const converted = await convertHeic({ buffer: bytes, format: "JPEG", quality: 0.9 });
-      output = Buffer.from(converted);
-      kind = "jpeg";
-    } catch {
-      // Not decodable as HEIC (e.g. AVIF); fall through to sharp below.
-    }
-  }
-
-  if (kind === "isobmff" || kind === "unknown" || output.byteLength > MAX_PHOTO_BYTES) {
+  if (
+    (kind !== "jpeg" && kind !== "png" && kind !== "webp") ||
+    output.byteLength > MAX_PHOTO_BYTES
+  ) {
     output = await sharp(output, { failOn: "none" })
       .rotate()
       .resize({
