@@ -4,6 +4,7 @@
 import Link from "next/link";
 import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { GardenWowPanel } from "@/components/receipts/gardenwow-panel";
 import { StatusBanner } from "@/components/status-banner";
 import {
   deleteReceipt,
@@ -368,6 +369,16 @@ export function ReceiptDetailClient({ receiptId }: ReceiptDetailClientProps) {
                   </p>
                 </div>
               </section>
+            ) : null}
+
+            {activeTab === "info" ? (
+              <GardenWowPanel
+                hasUnsavedChanges={isDirty}
+                receiptDate={receipt.receipt_date}
+                receiptId={receipt.id}
+                totalAmount={receipt.total_amount}
+                userId={receipt.user_id}
+              />
             ) : (
               <section className="glass-panel overflow-hidden rounded-[28px]">
                 {receipt.signed_image_url ? (

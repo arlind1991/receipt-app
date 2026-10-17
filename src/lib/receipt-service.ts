@@ -403,7 +403,7 @@ export async function refreshAllAppCaches() {
   }
 }
 
-async function getAccessToken() {
+export async function getAccessToken() {
   const supabase = getSupabaseBrowserClient();
   if (!supabase) {
     return null;
