@@ -8,6 +8,7 @@ import {
   getLastUsedFolderId,
   setLastUsedFolderId,
 } from "@/lib/local-storage";
+import { acquireCameraStream, pauseCameraStream } from "@/lib/camera-stream";
 import { fetchFolders, saveReceipt } from "@/lib/receipt-service";
 import { ensureBrowserSession, supabaseEnvError } from "@/lib/supabase/session";
 import type { ReceiptProcessingQueueItem } from "@/lib/types";
@@ -169,7 +170,7 @@ export function CameraCapture() {
       }
 
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({
+        const stream = await acquireCameraStream({
           audio: false,
           video: {
             facingMode: { ideal: "environment" },
@@ -202,8 +203,13 @@ export function CameraCapture() {
     });
   }, [applyPreferredCameraZoom, readCameraPermissionState]);
 
+  // Pauses rather than stops the shared stream so iOS doesn't ask for camera
+  // permission again next time (see lib/camera-stream).
   function stopCamera() {
-    streamRef.current?.getTracks().forEach((track) => track.stop());
+    pauseCameraStream();
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
     streamRef.current = null;
     setIsCameraReady(false);
   }
@@ -216,6 +222,24 @@ export function CameraCapture() {
       revokeFrameUrls(multipleFramesRef.current);
       revokeFrameUrls([twoSidedFramesRef.current.front, twoSidedFramesRef.current.back]);
     };
+  }, [startCamera]);
+
+  // The shared stream is stopped when the app goes to the background; restart
+  // it when the user comes back to this screen.
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState !== "visible") {
+        return;
+      }
+      const stream = streamRef.current;
+      if (!stream || stream.getVideoTracks().every((track) => track.readyState === "ended")) {
+        streamRef.current = null;
+        void startCamera();
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
   }, [startCamera]);
 
   function revokeFrameUrls(frames: Array<CapturedFrame | null | undefined>) {
