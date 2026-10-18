@@ -6,6 +6,16 @@ import { useRouter } from "next/navigation";
 import type { User } from "@supabase/supabase-js";
 import { AppNav } from "@/components/app-nav";
 import { StatusBanner } from "@/components/status-banner";
+import { BrandHeader } from "@/components/ui/brand-header";
+import {
+  CameraIcon,
+  ChevronRightIcon,
+  LeafIcon,
+  ReportsIcon,
+  SignOutIcon,
+  UserIcon,
+} from "@/components/ui/icons";
+import { isGardenWowEnabled } from "@/lib/gardenwow/client";
 import {
   deleteAllUserReceipts,
   fetchReceiptCount,
@@ -17,11 +27,6 @@ import {
   signOutCurrentUser,
   subscribeToSessionBootstrap,
 } from "@/lib/supabase/session";
-import {
-  getThemePreference,
-  setThemePreference,
-  type ThemePreference,
-} from "@/lib/local-storage";
 
 const showDevTools =
   process.env.NODE_ENV !== "production" ||
@@ -36,9 +41,7 @@ export function AccountScreen() {
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [isDeletingAll, setIsDeletingAll] = useState(false);
   const [receiptCount, setReceiptCount] = useState<number | null>(null);
-  const [themePreference, setThemePreferenceState] = useState<ThemePreference>(() =>
-    getThemePreference(),
-  );
+  const [gardenWowOn, setGardenWowOn] = useState(false);
   const [user, setUser] = useState(getSessionBootstrapState().user);
   const email = useMemo(() => user?.email ?? "Signed in", [user]);
   const providerInfo = useMemo(() => getProviderInfo(user), [user]);
@@ -51,22 +54,21 @@ export function AccountScreen() {
   }, []);
 
   useEffect(() => {
-    const loadReceiptCount = async () => {
+    const load = async () => {
       const sessionUser = user ?? (await ensureBrowserSession());
       if (!sessionUser) {
         setReceiptCount(null);
         return;
       }
 
+      void isGardenWowEnabled(sessionUser.id).then(setGardenWowOn);
       const result = await fetchReceiptCount(sessionUser.id);
-      if (!result.ok) {
-        return;
+      if (result.ok) {
+        setReceiptCount(result.data);
       }
-
-      setReceiptCount(result.data);
     };
 
-    void loadReceiptCount();
+    void load();
   }, [user]);
 
   async function handleSignOut() {
@@ -105,132 +107,135 @@ export function AccountScreen() {
     setIsDeletingAll(false);
   }
 
-  function handleThemeChange(preference: ThemePreference) {
-    setThemePreference(preference);
-    setThemePreferenceState(preference);
-
-    if (preference === "system") {
-      document.documentElement.removeAttribute("data-theme");
-      return;
-    }
-
-    document.documentElement.setAttribute("data-theme", preference);
-  }
-
   return (
-    <main className="app-shell app-shell-with-nav">
-      <section className="mx-auto w-full max-w-md space-y-4">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <p className="eyebrow">Account</p>
-            <h1 className="mt-2 text-3xl font-semibold tracking-tight">Your account</h1>
+    <main className="tab-screen">
+      <BrandHeader title="Settings">
+        <div className="mx-auto flex max-w-md items-center gap-4 px-5 pt-3 pb-6">
+          <span className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full border-[3px] border-white bg-[var(--brand-strong)] text-[var(--brand-ink)]">
+            <UserIcon className="h-9 w-9" />
+          </span>
+          <div className="min-w-0">
+            <p className="truncate text-lg font-bold">{email}</p>
+            <p className="text-sm font-semibold text-white/80">
+              Signed in with {providerInfo} · since {createdDateLabel}
+            </p>
           </div>
-          <Link
-            href="/camera"
-            className="secondary-button rounded-full px-4 py-2 text-sm transition"
-          >
-            Back to camera
-          </Link>
         </div>
+        <div className="bg-[var(--brand-strong)] py-4 text-center">
+          <p className="text-lg font-extrabold tracking-wide uppercase">
+            <span className="mr-2 inline-block min-w-9 rounded bg-[var(--brand-ink)] px-2 py-0.5 text-center">
+              {receiptCount ?? "…"}
+            </span>
+            Receipts saved
+          </p>
+        </div>
+      </BrandHeader>
 
+      <section className="mx-auto w-full max-w-md">
         {statusBanner ? (
-          <StatusBanner tone={statusBanner.tone} message={statusBanner.message} />
+          <div className="p-4">
+            <StatusBanner tone={statusBanner.tone} message={statusBanner.message} />
+          </div>
         ) : null}
 
-        <section className="glass-panel rounded-[28px] p-5">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <p className="eyebrow">Profile</p>
-              <p className="mt-3 text-lg font-medium text-[var(--text-primary)]">{email}</p>
-            </div>
-            <span className="rounded-full bg-[var(--surface-soft)] px-3 py-1 text-[11px] uppercase tracking-[0.14em] text-[var(--text-secondary)]">
-              {providerInfo}
-            </span>
-          </div>
-
-          <div className="mt-5 grid grid-cols-2 gap-3">
-            <AccountStat
-              label="Saved receipts"
-              value={receiptCount != null ? String(receiptCount) : "Loading..."}
+        <div className="divide-y divide-[var(--border-soft)] bg-[var(--surface)]">
+          <SettingsRow
+            href="/camera"
+            iconClass="bg-[var(--pink)]"
+            icon={<CameraIcon className="h-6 w-6" />}
+            title="Scan a receipt"
+            subtitle="Take a photo and fill in the details automatically"
+          />
+          <SettingsRow
+            href="/reports"
+            iconClass="bg-[#3d8bfd]"
+            icon={<ReportsIcon className="h-6 w-6" />}
+            title="Reports"
+            subtitle="Totals by tax category and tag"
+          />
+          {gardenWowOn ? (
+            <SettingsRow
+              iconClass="bg-[#2f9e5b]"
+              icon={<LeafIcon className="h-6 w-6" />}
+              title="GardenWow"
+              subtitle="Connected. Receipts are filed in GardenWow automatically"
             />
-            <AccountStat label="Member since" value={createdDateLabel} />
-          </div>
+          ) : null}
+        </div>
 
-          <div className="mt-5 rounded-[22px] border border-[var(--border-soft)] bg-[var(--card-soft)] p-4">
-            <p className="text-xs uppercase tracking-[0.16em] text-[var(--text-muted)]">
-              Signed in as
-            </p>
-            <p className="mt-2 text-sm text-[var(--text-primary)]">{email}</p>
-            <p className="mt-2 text-sm text-[var(--text-secondary)]">
-              Auth provider: {providerInfo}
-            </p>
-          </div>
-
-          <div className="mt-5">
-            <p className="text-xs uppercase tracking-[0.16em] text-[var(--text-muted)]">
-              Theme
-            </p>
-            <div className="mt-3 grid grid-cols-3 gap-2">
-              {(["system", "light", "dark"] as ThemePreference[]).map((option) => {
-                const active = themePreference === option;
-
-                return (
-                  <button
-                    key={option}
-                    type="button"
-                    onClick={() => handleThemeChange(option)}
-                    className={`rounded-full px-4 py-3 text-sm font-medium capitalize transition ${
-                      active
-                        ? "bg-[var(--accent)] text-[var(--text-on-accent)]"
-                        : "secondary-button"
-                    }`}
-                  >
-                    {option}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        </section>
-
-        <section className="glass-panel rounded-[28px] p-5">
-          <p className="eyebrow">Actions</p>
-          <p className="mt-3 text-sm leading-6 text-[var(--text-secondary)]">
-            Keep things simple for now: sign out when you are done, or clear test data if you are
-            using a dev account.
-          </p>
+        <div className="mt-6 divide-y divide-[var(--border-soft)] bg-[var(--surface)]">
           <button
             type="button"
             onClick={() => void handleSignOut()}
             disabled={isSigningOut}
-            className="secondary-button mt-5 w-full rounded-full px-4 py-3 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-60"
+            className="flex w-full items-center gap-4 px-4 py-4 text-left transition hover:bg-[var(--nav-hover)] disabled:opacity-60"
           >
-            {isSigningOut ? "Signing out..." : "Sign out"}
+            <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#8a99a6] text-white">
+              <SignOutIcon className="h-6 w-6" />
+            </span>
+            <span className="text-[1.1rem] text-[var(--text-strong)]">
+              {isSigningOut ? "Logging out..." : "Log out"}
+            </span>
           </button>
+        </div>
 
-          {showDevTools ? (
-            <div className="danger-card mt-3 rounded-[22px] p-4">
-              <p className="text-sm font-medium text-[var(--text-primary)]">
-                Delete all my test receipts
-              </p>
-              <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
-                Removes receipts owned by this signed-in account. Use this only for safe testing.
-              </p>
-              <button
-                type="button"
-                onClick={() => void handleDeleteAll()}
-                disabled={isDeletingAll}
-                className="danger-card mt-4 w-full rounded-full px-4 py-3 text-sm font-medium transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {isDeletingAll ? "Deleting test data..." : "Delete all test receipts"}
-              </button>
-            </div>
-          ) : null}
-        </section>
+        {showDevTools ? (
+          <div className="danger-card m-4 rounded-2xl p-4">
+            <p className="text-sm font-bold">Delete all my test receipts</p>
+            <p className="mt-1 text-sm leading-6">
+              Removes receipts owned by this signed-in account. Only shown in development.
+            </p>
+            <button
+              type="button"
+              onClick={() => void handleDeleteAll()}
+              disabled={isDeletingAll}
+              className="mt-3 w-full rounded-full border border-[var(--danger-border)] bg-white px-4 py-2.5 text-sm font-semibold disabled:opacity-60"
+            >
+              {isDeletingAll ? "Deleting test data..." : "Delete all test receipts"}
+            </button>
+          </div>
+        ) : null}
       </section>
 
       <AppNav />
     </main>
+  );
+}
+
+function SettingsRow({
+  href,
+  icon,
+  iconClass,
+  subtitle,
+  title,
+}: {
+  href?: string;
+  icon: React.ReactNode;
+  iconClass: string;
+  subtitle?: string;
+  title: string;
+}) {
+  const content = (
+    <>
+      <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-white ${iconClass}`}>
+        {icon}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-[1.1rem] text-[var(--text-strong)]">{title}</span>
+        {subtitle ? (
+          <span className="mt-0.5 block text-sm text-[var(--text-secondary)]">{subtitle}</span>
+        ) : null}
+      </span>
+      {href ? <ChevronRightIcon className="h-5 w-5 shrink-0 text-[var(--text-muted)]" /> : null}
+    </>
+  );
+
+  return href ? (
+    <Link href={href} className="flex items-center gap-4 px-4 py-4 transition hover:bg-[var(--nav-hover)]">
+      {content}
+    </Link>
+  ) : (
+    <div className="flex items-center gap-4 px-4 py-4">{content}</div>
   );
 }
 
@@ -275,13 +280,4 @@ function formatAccountCreatedDate(user: User | null) {
     month: "short",
     year: "numeric",
   }).format(new Date(user.created_at));
-}
-
-function AccountStat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-[22px] border border-[var(--border-soft)] bg-[var(--card-soft)] p-4">
-      <p className="text-xs uppercase tracking-[0.16em] text-[var(--text-muted)]">{label}</p>
-      <p className="mt-2 text-sm font-medium text-[var(--text-primary)]">{value}</p>
-    </div>
-  );
 }

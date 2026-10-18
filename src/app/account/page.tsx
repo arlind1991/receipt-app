@@ -1,10 +1,6 @@
-import { SessionGate } from "@/components/auth/session-gate";
-import { AccountScreen } from "@/components/account/account-screen";
+import { redirect } from "next/navigation";
 
+// The account screen is now Settings.
 export default function AccountPage() {
-  return (
-    <SessionGate requireAuth>
-      <AccountScreen />
-    </SessionGate>
-  );
+  redirect("/settings");
 }

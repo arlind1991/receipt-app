@@ -44,5 +44,5 @@ export type GardenWowReceiptState = {
   link: GardenWowReceiptLink | null;
   target: GardenWowTarget;
   // Fields the platform needs before the receipt can be sent.
-  missing: Array<"date" | "total">;
+  missing: Array<"date" | "total" | "photo">;
 };

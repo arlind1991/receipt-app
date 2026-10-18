@@ -13,7 +13,7 @@ export type ReceiptRow = {
   id: string;
   user_id: string;
   folder_id: string | null;
-  image_path: string;
+  image_path: string | null;
   status: string;
   merchant_name: string | null;
   receipt_date: string | null;
@@ -33,7 +33,7 @@ export type ReceiptInsert = {
   id: string;
   user_id: string;
   folder_id: string | null;
-  image_path: string;
+  image_path: string | null;
   status: string;
   merchant_name: string | null;
   receipt_date: string | null;

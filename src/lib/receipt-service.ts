@@ -149,14 +149,16 @@ export async function fetchReceiptsWithUrls(
   }
 
   const receipts = data ?? [];
-  const signedUrlMap = await createSignedUrlMap(receipts.map((item) => item.image_path));
+  const signedUrlMap = await createSignedUrlMap(
+    receipts.map((item) => item.image_path).filter((path): path is string => Boolean(path)),
+  );
 
   return {
     ok: true,
     data: receipts.map((item) => ({
       ...item,
       folder_name: item.folders?.name ?? null,
-      signed_image_url: signedUrlMap[item.image_path] ?? null,
+      signed_image_url: item.image_path ? (signedUrlMap[item.image_path] ?? null) : null,
     })),
   };
 }
@@ -199,16 +201,17 @@ export async function fetchReceiptDetail(
     return { ok: false, error: error.message };
   }
 
-  const { data: signedUrlData } = await supabase.storage
-    .from("receipts")
-    .createSignedUrl(data.image_path, 60 * 60);
+  const signedUrl = data.image_path
+    ? (await supabase.storage.from("receipts").createSignedUrl(data.image_path, 60 * 60)).data
+        ?.signedUrl
+    : null;
 
   return {
     ok: true,
     data: {
       ...data,
       folder_name: data.folders?.name ?? null,
-      signed_image_url: signedUrlData?.signedUrl ?? null,
+      signed_image_url: signedUrl ?? null,
     },
   };
 }
@@ -269,6 +272,122 @@ export async function analyzeCapturedReceipt(blob: Blob): Promise<Result<Receipt
 
   const json = (await response.json()) as ReceiptDetectionResult;
   return { ok: true, data: json };
+}
+
+type ManualReceiptInput = {
+  category: string | null;
+  image: Blob | null;
+  merchantName: string | null;
+  receiptDate: string | null;
+  totalAmount: number | null;
+  userId: string;
+};
+
+// Saves a receipt entered by hand. With an amount it's complete straight away;
+// with only a photo it goes to "processing" so the photo is read to fill it in.
+export async function createManualReceipt(
+  input: ManualReceiptInput,
+): Promise<Result<{ id: string; status: "done" | "processing" }>> {
+  const supabase = getSupabaseBrowserClient();
+  if (!supabase) {
+    return { ok: false, error: "Supabase environment variables are missing." };
+  }
+  if (input.totalAmount == null && !input.image) {
+    return { ok: false, error: "Enter the amount, or add a photo so it can be read." };
+  }
+
+  const receiptId = crypto.randomUUID();
+  let imagePath: string | null = null;
+  if (input.image) {
+    imagePath = buildReceiptImagePath(input.userId, receiptId);
+    const { error: uploadError } = await supabase.storage
+      .from("receipts")
+      .upload(imagePath, input.image, { contentType: "image/jpeg", upsert: false });
+    if (uploadError) {
+      return { ok: false, error: uploadError.message };
+    }
+  }
+
+  const status = input.totalAmount != null ? "done" : "processing";
+  const payload: ReceiptInsert = {
+    id: receiptId,
+    user_id: input.userId,
+    folder_id: null,
+    image_path: imagePath,
+    status,
+    merchant_name: input.merchantName,
+    receipt_date: input.receiptDate,
+    total_amount: input.totalAmount,
+    vat_amount: null,
+    currency: "GBP",
+    category: input.category,
+    raw_ocr_text: null,
+    notes: null,
+    parsed_ocr_json: null,
+    extraction_error: null,
+  };
+
+  const { error: insertError } = await supabase.from("receipts").insert(payload);
+  if (insertError) {
+    if (imagePath) {
+      await supabase.storage.from("receipts").remove([imagePath]);
+    }
+    return { ok: false, error: insertError.message };
+  }
+
+  // Run a complete receipt through the save route too, so the server-side
+  // steps (such as filing it in GardenWow) happen as for an edited receipt.
+  if (status === "done") {
+    await updateReceiptFields(receiptId, {
+      category: input.category,
+      currency: "GBP",
+      folder_id: null,
+      merchant_name: input.merchantName,
+      notes: null,
+      receipt_date: input.receiptDate,
+      total_amount: input.totalAmount,
+      vat_amount: null,
+    });
+  }
+
+  return { ok: true, data: { id: receiptId, status } };
+}
+
+// Adds (or replaces) the photo of an existing receipt.
+export async function attachReceiptImage(
+  receiptId: string,
+  userId: string,
+  image: Blob,
+  previousPath: string | null,
+): Promise<Result<void>> {
+  const supabase = getSupabaseBrowserClient();
+  if (!supabase) {
+    return { ok: false, error: "Supabase environment variables are missing." };
+  }
+
+  // A new path each time, so a cached old photo is never shown for the new one.
+  const imagePath = buildReceiptImagePath(userId, `${receiptId}-${Date.now()}`);
+  const { error: uploadError } = await supabase.storage
+    .from("receipts")
+    .upload(imagePath, image, { contentType: "image/jpeg", upsert: false });
+  if (uploadError) {
+    return { ok: false, error: uploadError.message };
+  }
+
+  const { error: updateError } = await supabase
+    .from("receipts")
+    .update({ image_path: imagePath })
+    .eq("id", receiptId)
+    .eq("user_id", userId);
+  if (updateError) {
+    await supabase.storage.from("receipts").remove([imagePath]);
+    return { ok: false, error: updateError.message };
+  }
+
+  if (previousPath) {
+    await supabase.storage.from("receipts").remove([previousPath]);
+  }
+  return { ok: true, data: undefined };
 }
 
 export async function updateReceiptFields(

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authorizeGardenWowRequest } from "@/lib/gardenwow/server";
 import {
+  GardenWowSetupError,
   getGardenWowState,
   removeReceiptFromGardenWow,
   setGardenWowTarget,
@@ -23,11 +24,18 @@ export async function GET(request: NextRequest, context: Context) {
   }
 
   const { id } = await context.params;
-  const state = await getGardenWowState(auth.supabase, id, auth.userId);
-  if (!state) {
-    return NextResponse.json({ error: "Receipt not found." }, { status: 404 });
+  try {
+    const state = await getGardenWowState(auth.supabase, id, auth.userId);
+    if (!state) {
+      return NextResponse.json({ error: "Receipt not found." }, { status: 404 });
+    }
+    return NextResponse.json(state);
+  } catch (error) {
+    if (error instanceof GardenWowSetupError) {
+      return NextResponse.json({ error: error.message }, { status: 503 });
+    }
+    throw error;
   }
-  return NextResponse.json(state);
 }
 
 // Sets the destination (clientId null = Unassigned) and sends the receipt now,
@@ -61,7 +69,7 @@ export async function POST(request: NextRequest, context: Context) {
   }
 
   const outcome = await syncReceiptToGardenWow(supabase, id, userId, { restore: true });
-  const state = await getGardenWowState(supabase, id, userId);
+  const state = await getGardenWowState(supabase, id, userId).catch(() => null);
   return respond(outcome, state);
 }
 
@@ -78,7 +86,7 @@ export async function DELETE(request: NextRequest, context: Context) {
     return NextResponse.json({ error: result.message }, { status: result.status });
   }
 
-  const state = await getGardenWowState(auth.supabase, id, auth.userId);
+  const state = await getGardenWowState(auth.supabase, id, auth.userId).catch(() => null);
   return NextResponse.json({ ok: true, ...state });
 }
 

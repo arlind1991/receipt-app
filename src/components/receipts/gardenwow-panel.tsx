@@ -114,7 +114,7 @@ export function GardenWowPanel({
   }
 
   const destination = describeTarget(link?.status === "sent" ? linkTarget(link) : target);
-  let headline = "Checking...";
+  let headline = !state && message?.tone === "error" ? "Not available right now" : "Checking...";
   let detail: string | null = null;
   if (state) {
     if (link?.status === "sent") {

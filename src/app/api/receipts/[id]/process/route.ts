@@ -54,7 +54,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
     .select("id, user_id, image_path, status")
     .eq("id", id)
     .eq("user_id", authResult.data.id)
-    .single<{ id: string; user_id: string; image_path: string; status: string }>();
+    .single<{ id: string; user_id: string; image_path: string | null; status: string }>();
 
   if (receiptError || !receipt) {
     return NextResponse.json({ error: "Receipt not found." }, { status: 404 });
@@ -64,9 +64,16 @@ export async function POST(request: NextRequest, context: RouteContext) {
     return NextResponse.json({ ok: true, status: "done" });
   }
 
+  if (!receipt.image_path) {
+    const reason = "Add a photo of the receipt to read it automatically.";
+    await markReceiptFailed(supabase, receipt.id, reason);
+    return NextResponse.json({ error: reason }, { status: 400 });
+  }
+  const imagePath = receipt.image_path;
+
   const { ocrModel, structuredModel } = getReceiptOcrModels();
   console.info("[receipt-processing:start]", {
-    image_path: receipt.image_path,
+    image_path: imagePath,
     models:
       receiptOcrProvider === "anthropic"
         ? { model: CLAUDE_RECEIPT_MODEL }
@@ -77,13 +84,13 @@ export async function POST(request: NextRequest, context: RouteContext) {
 
   const { data: image, error: downloadError } = await supabase.storage
     .from("receipts")
-    .download(receipt.image_path);
+    .download(imagePath);
 
   if (downloadError || !image) {
     const reason = downloadError?.message ?? "Receipt image could not be loaded.";
     console.warn("[receipt-processing:image]", {
       image_download_success: false,
-      image_path: receipt.image_path,
+      image_path: imagePath,
       receipt_id: receipt.id,
       reason,
     });
@@ -96,7 +103,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
     byte_size: arrayBuffer.byteLength,
     content_type: image.type || "image/jpeg",
     image_download_success: true,
-    image_path: receipt.image_path,
+    image_path: imagePath,
     receipt_id: receipt.id,
   });
 

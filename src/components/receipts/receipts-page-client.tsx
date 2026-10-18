@@ -5,8 +5,10 @@ import Link from "next/link";
 import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { AppNav } from "@/components/app-nav";
-import { EmptyState } from "@/components/empty-state";
 import { StatusBanner } from "@/components/status-banner";
+import { BrandHeader, TabStrip } from "@/components/ui/brand-header";
+import { CameraIcon } from "@/components/ui/icons";
+import { toExpenseCategory } from "@/lib/categories";
 import {
   getReceiptProcessingQueue,
   removeReceiptProcessingQueueItem,
@@ -18,7 +20,7 @@ import {
   triggerReceiptProcessing,
 } from "@/lib/receipt-service";
 import { ensureBrowserSession, supabaseEnvError } from "@/lib/supabase/session";
-import { formatCurrency, formatReceiptDate, normalizeCurrency } from "@/lib/utils";
+import { formatCurrency, normalizeCurrency } from "@/lib/utils";
 import type { ReceiptListItem, ReceiptProcessingQueueItem } from "@/lib/types";
 
 type ReceiptsTab = "recent" | "all" | "processing";
@@ -141,8 +143,6 @@ export function ReceiptsPageClient() {
     [sortedItems],
   );
 
-  const recentItems = useMemo(() => allItems.slice(0, 15), [allItems]);
-
   const processingListItems = useMemo(() => {
     const queuedIds = new Set(queueItems.map((item) => item.receipt_id));
     const merged: ProcessingListItem[] = [
@@ -165,17 +165,6 @@ export function ReceiptsPageClient() {
     });
   }, [processingReceipts, queueItems]);
 
-  const visibleReceipts = useMemo(() => {
-    if (activeTab === "recent") {
-      return recentItems;
-    }
-
-    if (activeTab === "processing") {
-      return processingReceipts;
-    }
-
-    return allItems;
-  }, [activeTab, allItems, processingReceipts, recentItems]);
 
   useEffect(() => {
     if (queueItems.length === 0 && processingReceipts.length === 0) {
@@ -292,124 +281,112 @@ export function ReceiptsPageClient() {
     void processNextQueueItem();
   }, [queueItems]);
 
+  const processingCount = processingListItems.length;
+  const monthSummary = useMemo(() => summarizeThisMonth(allItems), [allItems]);
+  const allGroups = useMemo(() => groupByDay(allItems), [allItems]);
+  const recentByAdded = useMemo(
+    () =>
+      [...allItems]
+        .sort((left, right) => new Date(right.created_at).getTime() - new Date(left.created_at).getTime())
+        .slice(0, 15),
+    [allItems],
+  );
+
   return (
-    <main className="app-shell app-shell-with-nav">
-      <section className="mx-auto w-full max-w-md">
-        <div className="mb-5 flex items-end justify-between gap-4">
-          <div>
-            <p className="eyebrow">Receipts</p>
-            <h1 className="mt-2 text-3xl font-semibold tracking-tight">Expense receipts</h1>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => void handleRefresh()}
-              className="secondary-button rounded-full px-4 py-2 text-sm transition"
-            >
-              Refresh
-            </button>
-            <Link
-              href="/camera"
-              className="secondary-button rounded-full px-4 py-2 text-sm transition"
-            >
-              Scan
-            </Link>
-          </div>
+    <main className="tab-screen">
+      <BrandHeader
+        left={
+          <button
+            type="button"
+            onClick={() => void handleRefresh()}
+            className="rounded-full px-1 py-1 text-sm font-semibold text-white/90 hover:text-white"
+          >
+            Refresh
+          </button>
+        }
+        right={
+          <Link href="/camera" aria-label="Scan a receipt" className="text-white/95 hover:text-white">
+            <CameraIcon className="h-7 w-7" />
+          </Link>
+        }
+      >
+        <div className="mx-auto max-w-md px-6 pt-2 pb-7 text-center">
+          <p className="text-sm font-bold tracking-[0.08em] text-[var(--brand-ink)] uppercase">
+            Spent this month
+          </p>
+          <p className="mt-1 text-[2.6rem] leading-tight font-extrabold">
+            {formatCurrency(monthSummary.total, "GBP")}
+          </p>
+          <p className="text-sm font-semibold text-white/85">
+            {monthSummary.count} receipt{monthSummary.count === 1 ? "" : "s"}
+            {monthSummary.otherCurrencies ? " · other currencies not included" : ""}
+          </p>
         </div>
+        <TabStrip
+          value={activeTab}
+          onChange={(tab) => handleTabChange(tab, router, setActiveTab)}
+          tabs={[
+            { label: "Recent", value: "recent" },
+            { label: "All", value: "all" },
+            { badge: processingCount || undefined, label: "Processing", value: "processing" },
+          ]}
+        />
+      </BrandHeader>
 
-        <section className="glass-panel rounded-[28px] p-3">
-          <div className="grid grid-cols-3 gap-2">
-            <ReceiptsTabButton
-              active={activeTab === "recent"}
-              label="Recent"
-              onClick={() => handleTabChange("recent", router, setActiveTab)}
-            />
-            <ReceiptsTabButton
-              active={activeTab === "all"}
-              label="All"
-              onClick={() => handleTabChange("all", router, setActiveTab)}
-            />
-            <ReceiptsTabButton
-              active={activeTab === "processing"}
-              label="Processing"
-              onClick={() => handleTabChange("processing", router, setActiveTab)}
-            />
-          </div>
-        </section>
-
+      <section className="mx-auto w-full max-w-md">
         {statusMessage ? (
-          <div className="mt-4">
+          <div className="p-4">
             <StatusBanner tone="error" message={statusMessage} />
           </div>
         ) : null}
 
-        <section className="mt-4">
-          <div className="mb-3 flex items-center justify-between px-1">
-            <div>
-              <p className="text-base font-semibold text-[var(--text-primary)]">
-                {activeTab === "recent"
-                  ? "Recent receipts"
-                  : activeTab === "processing"
-                    ? "Processing now"
-                    : "All receipts"}
-              </p>
-              <p className="mt-1 text-xs uppercase tracking-[0.16em] text-[var(--text-muted)]">
-                {activeTab === "processing"
-                  ? `${processingListItems.length} item${processingListItems.length === 1 ? "" : "s"}`
-                  : `${visibleReceipts.length} item${visibleReceipts.length === 1 ? "" : "s"}`}
-              </p>
-            </div>
+        {loading && activeTab !== "processing" ? (
+          <p className="px-6 py-10 text-center text-sm text-[var(--text-secondary)]">Loading receipts...</p>
+        ) : null}
+
+        {!loading && activeTab === "processing" && processingCount === 0 ? (
+          <EmptyList text="Nothing is being read right now. Receipts you scan appear here until they're done." />
+        ) : null}
+
+        {!loading && activeTab !== "processing" && allItems.length === 0 ? (
+          <EmptyList text="Start saving by scanning your receipts & invoices" />
+        ) : null}
+
+        {activeTab === "processing" && processingCount > 0 ? (
+          <div className="divide-y divide-[var(--border-soft)] bg-[var(--surface)]">
+            {processingListItems.map((item) =>
+              item.kind === "queue" ? (
+                <ProcessingQueueRow key={item.item.receipt_id} item={item.item} />
+              ) : (
+                <ProcessingRemoteRow key={item.item.id} item={item.item} />
+              ),
+            )}
           </div>
+        ) : null}
 
-          {loading && activeTab !== "processing" ? (
-            <div className="soft-card rounded-[28px] p-6 text-sm text-[var(--text-secondary)]">
-              Loading receipts...
-            </div>
-          ) : null}
+        {activeTab === "all" && !loading
+          ? allGroups.map((group) => (
+              <section key={group.key}>
+                <h2 className="sticky top-0 z-10 flex justify-between bg-[var(--app-bg)] px-4 pt-4 pb-2 text-xs font-bold tracking-[0.06em] text-[var(--text-secondary)] uppercase">
+                  <span>{group.label}</span>
+                  <span className="tracking-normal normal-case">{formatCurrency(group.total, "GBP")}</span>
+                </h2>
+                <div className="divide-y divide-[var(--border-soft)] bg-[var(--surface)]">
+                  {group.items.map((item) => (
+                    <ExpenseRow key={item.id} item={item} />
+                  ))}
+                </div>
+              </section>
+            ))
+          : null}
 
-          {!loading && activeTab === "processing" && processingListItems.length === 0 ? (
-            <EmptyState
-              title="No receipts are processing"
-              description="Receipts being scanned will appear here until extraction finishes."
-            />
-          ) : null}
-
-          {!loading && activeTab !== "processing" && visibleReceipts.length === 0 ? (
-            <EmptyState
-              title="No receipts yet"
-              description="Scan your first receipt to start building your expense list."
-            />
-          ) : null}
-
-          {activeTab === "processing" && processingListItems.length > 0 ? (
-            <div className="glass-panel overflow-hidden rounded-[28px]">
-              <div className="divide-y divide-[var(--border-soft)]">
-                {processingListItems.map((item) =>
-                  item.kind === "queue" ? (
-                    <ProcessingQueueRow key={item.item.receipt_id} item={item.item} />
-                  ) : (
-                    <ProcessingRemoteRow key={item.item.id} item={item.item} />
-                  ),
-                )}
-              </div>
-            </div>
-          ) : null}
-
-          {activeTab !== "processing" && !loading && visibleReceipts.length > 0 ? (
-            <div className="glass-panel overflow-hidden rounded-[28px]">
-              <div className="grid grid-cols-[92px_1fr_auto] gap-3 border-b border-[var(--border-soft)] px-4 py-3 text-[11px] uppercase tracking-[0.16em] text-[var(--text-muted)]">
-                <span>Date</span>
-                <span>Merchant</span>
-                <span>Amount</span>
-              </div>
-              <div>
-                {visibleReceipts.map((item) => (
-                  <ReceiptManagerRow key={item.id} item={item} />
-                ))}
-              </div>
-            </div>
-          ) : null}
-        </section>
+        {activeTab === "recent" && !loading && recentByAdded.length > 0 ? (
+          <div className="mt-3 divide-y divide-[var(--border-soft)] bg-[var(--surface)]">
+            {recentByAdded.map((item) => (
+              <ExpenseRow key={item.id} item={item} showAdded />
+            ))}
+          </div>
+        ) : null}
       </section>
 
       <AppNav />
@@ -417,27 +394,53 @@ export function ReceiptsPageClient() {
   );
 }
 
-function ReceiptsTabButton({
-  active,
-  label,
-  onClick,
-}: {
-  active: boolean;
-  label: string;
-  onClick: () => void;
-}) {
+function EmptyList({ text }: { text: string }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`rounded-full px-4 py-2 text-sm font-medium transition ${
-        active
-          ? "bg-[var(--accent)] text-[var(--text-on-accent)]"
-          : "secondary-button"
-      }`}
+    <p className="mx-auto max-w-xs px-6 py-16 text-center text-xl leading-snug font-bold text-[var(--brand-strong)]">
+      {text}
+    </p>
+  );
+}
+
+function ExpenseRow({ item, showAdded = false }: { item: ReceiptListItem; showAdded?: boolean }) {
+  const needsReview = buildRowStatus(item) === "Needs review";
+  const category = toExpenseCategory(item.category);
+  const day = new Date(`${(item.receipt_date ?? item.created_at).slice(0, 10)}T00:00:00`);
+
+  return (
+    <Link
+      href={`/receipts/${item.id}`}
+      className="flex items-center gap-4 px-4 py-4 transition hover:bg-[var(--nav-hover)]"
     >
-      {label}
-    </button>
+      <div className="w-11 shrink-0 text-center text-[var(--text-secondary)]">
+        <p className="text-xl leading-none font-semibold">{day.getDate()}</p>
+        <p className="mt-1 border-t border-[var(--text-muted)] pt-1 text-[0.68rem] font-bold tracking-wide uppercase">
+          {day.toLocaleDateString("en-GB", { month: "short" })}
+        </p>
+      </div>
+      <div className="min-w-0 flex-1 border-l border-[var(--border-soft)] pl-4">
+        <div className="flex items-baseline justify-between gap-3">
+          <p className="truncate text-[1.05rem] font-bold text-[var(--text-strong)]">
+            {item.merchant_name ?? "Unknown supplier"}
+          </p>
+          <p className="shrink-0 text-[1.05rem] font-bold text-[var(--text-strong)]">
+            {item.total_amount != null
+              ? formatCurrency(item.total_amount, normalizeCurrency(item.currency))
+              : "–"}
+          </p>
+        </div>
+        <p
+          className={`mt-1 truncate text-sm ${
+            needsReview ? "font-semibold text-[var(--pink)]" : "text-[var(--text-secondary)]"
+          }`}
+        >
+          {needsReview ? "Needs review" : (category ?? "No category")}
+        </p>
+        {showAdded ? (
+          <p className="mt-1 text-xs text-[var(--text-muted)]">Added {relativeDay(item.created_at)}</p>
+        ) : null}
+      </div>
+    </Link>
   );
 }
 
@@ -445,33 +448,14 @@ function ProcessingQueueRow({ item }: { item: ReceiptProcessingQueueItem }) {
   return (
     <Link
       href={`/receipts/${item.receipt_id}`}
-      className="grid grid-cols-[4.5rem_1fr] gap-4 px-4 py-4 transition hover:bg-[var(--nav-hover)]"
+      className="flex items-center gap-4 px-4 py-4 transition hover:bg-[var(--nav-hover)]"
     >
-      <div className="overflow-hidden rounded-[18px] border border-[var(--border-soft)] bg-[var(--surface-muted)]">
-        {item.thumbnail_data_url ? (
-          <img
-            src={item.thumbnail_data_url}
-            alt="Captured receipt"
-            className="h-[4.5rem] w-[4.5rem] object-cover"
-          />
-        ) : (
-          <div className="flex h-[4.5rem] w-[4.5rem] items-center justify-center text-xs text-[var(--text-muted)]">
-            Receipt
-          </div>
-        )}
+      <Thumbnail src={item.thumbnail_data_url} />
+      <div className="min-w-0 flex-1">
+        <p className="text-[1.02rem] font-bold text-[var(--text-strong)]">Reading receipt...</p>
+        <p className="mt-1 text-sm text-[var(--text-secondary)]">{item.status_text}</p>
       </div>
-      <div className="min-w-0">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <p className="text-sm font-semibold text-[var(--text-primary)]">Receipt in progress</p>
-            <p className="mt-1 text-sm text-[var(--text-secondary)]">{item.status_text}</p>
-          </div>
-          <QueueStatusPill state={item.state} />
-        </div>
-        <p className="mt-2 text-xs text-[var(--text-muted)]">
-          {formatReceiptDate(null, item.created_at)}
-        </p>
-      </div>
+      <QueueStatusPill state={item.state} />
     </Link>
   );
 }
@@ -480,93 +464,102 @@ function ProcessingRemoteRow({ item }: { item: ReceiptListItem }) {
   return (
     <Link
       href={`/receipts/${item.id}`}
-      className="grid grid-cols-[4.5rem_1fr] gap-4 px-4 py-4 transition hover:bg-[var(--nav-hover)]"
+      className="flex items-center gap-4 px-4 py-4 transition hover:bg-[var(--nav-hover)]"
     >
-      <div className="overflow-hidden rounded-[18px] border border-[var(--border-soft)] bg-[var(--surface-muted)]">
-        {item.signed_image_url ? (
-          <img
-            src={item.signed_image_url}
-            alt="Receipt preview"
-            className="h-[4.5rem] w-[4.5rem] object-cover"
-          />
-        ) : (
-          <div className="flex h-[4.5rem] w-[4.5rem] items-center justify-center text-xs text-[var(--text-muted)]">
-            Receipt
-          </div>
-        )}
-      </div>
-      <div className="min-w-0">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <p className="truncate text-sm font-semibold text-[var(--text-primary)]">
-              {item.merchant_name ?? "Receipt in progress"}
-            </p>
-            <p className="mt-1 text-sm text-[var(--text-secondary)]">
-              {buildProcessingStatus(item)}
-            </p>
-          </div>
-          <QueueStatusPill state="processing" />
-        </div>
-        <p className="mt-2 text-xs text-[var(--text-muted)]">
-          {formatReceiptDate(item.receipt_date, item.created_at)}
+      <Thumbnail src={item.signed_image_url} />
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-[1.02rem] font-bold text-[var(--text-strong)]">
+          {item.merchant_name ?? "Reading receipt..."}
         </p>
+        <p className="mt-1 text-sm text-[var(--text-secondary)]">{buildProcessingStatus(item)}</p>
       </div>
+      <QueueStatusPill state="processing" />
     </Link>
   );
 }
 
-function QueueStatusPill({
-  state,
-}: {
-  state: ReceiptProcessingQueueItem["state"];
-}) {
-  const tone =
-    state === "needs_review"
-      ? "border-amber-500/30 bg-amber-500/12 text-amber-700 dark:text-amber-300"
-      : "border-[var(--border-soft)] bg-[var(--surface-muted)] text-[var(--text-secondary)]";
-
+function Thumbnail({ src }: { src: string | null }) {
   return (
-    <span className={`rounded-full border px-3 py-1 text-[11px] font-medium uppercase tracking-[0.12em] ${tone}`}>
-      {state === "extracting"
-        ? "Extracting"
-        : state === "needs_review"
-          ? "Review"
-          : "Processing"}
+    <div className="h-14 w-14 shrink-0 overflow-hidden rounded-lg border border-[var(--border-soft)] bg-[var(--surface-muted)]">
+      {src ? <img src={src} alt="Receipt" className="h-14 w-14 object-cover" /> : null}
+    </div>
+  );
+}
+
+function QueueStatusPill({ state }: { state: ReceiptProcessingQueueItem["state"] }) {
+  const review = state === "needs_review";
+  return (
+    <span
+      className={`shrink-0 rounded-full px-3 py-1 text-[0.7rem] font-bold tracking-wide uppercase ${
+        review ? "bg-[var(--danger-bg)] text-[var(--pink)]" : "bg-[var(--brand-tint)] text-[var(--brand-strong)]"
+      }`}
+    >
+      {state === "extracting" ? "Reading" : review ? "Review" : "Processing"}
     </span>
   );
 }
 
-function ReceiptManagerRow({ item }: { item: ReceiptListItem }) {
-  return (
-    <Link
-      href={`/receipts/${item.id}`}
-      className="grid grid-cols-[92px_1fr_auto] gap-3 border-b border-[var(--border-soft)] px-4 py-4 transition hover:bg-[var(--nav-hover)] last:border-b-0"
-    >
-      <div className="min-w-0">
-        <p className="text-sm font-medium text-[var(--text-primary)]">
-          {formatReceiptDate(item.receipt_date, item.created_at)}
-        </p>
-        <p className="mt-1 text-xs text-[var(--text-muted)]">{buildRowStatus(item)}</p>
-      </div>
+function summarizeThisMonth(items: ReceiptListItem[]) {
+  const now = new Date();
+  const monthPrefix = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  let total = 0;
+  let count = 0;
+  let otherCurrencies = false;
+  for (const item of items) {
+    const date = item.receipt_date ?? item.created_at.slice(0, 10);
+    if (!date.startsWith(monthPrefix)) continue;
+    count += 1;
+    if (item.total_amount == null) continue;
+    if (normalizeCurrency(item.currency) === "GBP") total += Number(item.total_amount);
+    else otherCurrencies = true;
+  }
+  return { count, otherCurrencies, total };
+}
 
-      <div className="min-w-0">
-        <p className="truncate text-sm font-medium text-[var(--text-primary)]">
-          {item.merchant_name ?? "Unknown merchant"}
-        </p>
-        <p className="mt-1 truncate text-xs text-[var(--text-secondary)]">
-          {item.category ?? item.folder_name ?? "Unsorted"}
-        </p>
-      </div>
+// Groups receipts (already newest first) by receipt date, with a heading per day.
+function groupByDay(items: ReceiptListItem[]) {
+  const groups: Array<{ items: ReceiptListItem[]; key: string; label: string; total: number }> = [];
+  for (const item of items) {
+    const key = (item.receipt_date ?? item.created_at).slice(0, 10);
+    let group = groups[groups.length - 1];
+    if (!group || group.key !== key) {
+      group = { items: [], key, label: dayLabel(key), total: 0 };
+      groups.push(group);
+    }
+    group.items.push(item);
+    if (item.total_amount != null && normalizeCurrency(item.currency) === "GBP") {
+      group.total += Number(item.total_amount);
+    }
+  }
+  return groups;
+}
 
-      <div className="text-right">
-        <p className="text-sm font-semibold text-[var(--text-primary)]">
-          {item.total_amount != null
-            ? formatCurrency(item.total_amount, normalizeCurrency(item.currency))
-            : "Unknown"}
-        </p>
-      </div>
-    </Link>
-  );
+function dayLabel(isoDate: string) {
+  const date = new Date(`${isoDate}T00:00:00`);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const days = Math.round((today.getTime() - date.getTime()) / 86_400_000);
+  if (days === 0) return "Today";
+  if (days === 1) return "Yesterday";
+  return date.toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "long",
+    weekday: "long",
+    year: "numeric",
+  });
+}
+
+function relativeDay(timestamp: string) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const day = new Date(timestamp);
+  day.setHours(0, 0, 0, 0);
+  const days = Math.round((today.getTime() - day.getTime()) / 86_400_000);
+  if (days <= 0) return "today";
+  if (days === 1) return "yesterday";
+  if (days < 7) return `${days} days ago`;
+  if (days < 14) return "last week";
+  return new Date(timestamp).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
 }
 
 function handleTabChange(

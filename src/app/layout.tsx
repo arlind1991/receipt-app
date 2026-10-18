@@ -1,21 +1,16 @@
 import type { Metadata, Viewport } from "next";
-import { IBM_Plex_Mono, Space_Grotesk } from "next/font/google";
+import { Nunito_Sans } from "next/font/google";
 import { AppBootstrap } from "@/components/app-bootstrap";
 import "./globals.css";
 
-const spaceGrotesk = Space_Grotesk({
-  variable: "--font-space-grotesk",
+const nunitoSans = Nunito_Sans({
+  variable: "--font-nunito-sans",
   subsets: ["latin"],
-});
-
-const ibmPlexMono = IBM_Plex_Mono({
-  variable: "--font-ibm-plex-mono",
-  subsets: ["latin"],
-  weight: ["400", "500"],
+  weight: ["400", "600", "700", "800"],
 });
 
 export const viewport: Viewport = {
-  themeColor: "#08111f",
+  themeColor: "#00bdb4",
   viewportFit: "cover",
   width: "device-width",
   initialScale: 1,
@@ -53,7 +48,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${spaceGrotesk.variable} ${ibmPlexMono.variable} h-full bg-[var(--app-bg)] antialiased`}
+      className={`${nunitoSans.variable} h-full bg-[var(--app-bg)] antialiased`}
       suppressHydrationWarning
     >
       <body className="min-h-dvh bg-[var(--app-bg)] text-[var(--text-primary)]">

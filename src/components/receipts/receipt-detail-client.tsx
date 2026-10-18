@@ -6,14 +6,25 @@ import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { GardenWowPanel } from "@/components/receipts/gardenwow-panel";
 import { StatusBanner } from "@/components/status-banner";
+import { BrandHeader, Segmented } from "@/components/ui/brand-header";
 import {
+  AmountIcon,
+  CalendarIcon,
+  CategoryIcon,
+  ImageIcon,
+  StoreIcon,
+  TagIcon,
+} from "@/components/ui/icons";
+import { EXPENSE_CATEGORIES, toExpenseCategory } from "@/lib/categories";
+import { imageFileToJpeg } from "@/lib/image-upload";
+import {
+  attachReceiptImage,
   deleteReceipt,
   fetchReceiptDetail,
   triggerReceiptProcessing,
   updateReceiptFields,
 } from "@/lib/receipt-service";
 import { ensureBrowserSession, supabaseEnvError } from "@/lib/supabase/session";
-import { formatCurrency, formatReceiptDate, normalizeCurrency } from "@/lib/utils";
 import type { ReceiptDetail, ReceiptEditableFields } from "@/lib/types";
 
 type ReceiptDetailClientProps = {
@@ -21,6 +32,15 @@ type ReceiptDetailClientProps = {
 };
 
 type DetailTab = "info" | "image";
+
+type EditValues = {
+  amount: string;
+  category: string;
+  date: string;
+  merchant: string;
+  tag: string;
+  vat: string;
+};
 
 export function ReceiptDetailClient({ receiptId }: ReceiptDetailClientProps) {
   const router = useRouter();
@@ -33,17 +53,13 @@ export function ReceiptDetailClient({ receiptId }: ReceiptDetailClientProps) {
   const [isSavingEdits, setIsSavingEdits] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isRetrying, setIsRetrying] = useState(false);
+  const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
   const [isImageViewerOpen, setIsImageViewerOpen] = useState(false);
-  const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<DetailTab>("info");
   const merchantInputRef = useRef<HTMLInputElement | null>(null);
-  const [editValues, setEditValues] = useState({
-    amount: "",
-    category: "",
-    date: "",
-    merchant: "",
-    tag: "",
-  });
+  const cameraInputRef = useRef<HTMLInputElement | null>(null);
+  const libraryInputRef = useRef<HTMLInputElement | null>(null);
+  const [editValues, setEditValues] = useState<EditValues>(emptyEditValues);
 
   async function fetchReceipt() {
     if (supabaseEnvError) {
@@ -63,13 +79,7 @@ export function ReceiptDetailClient({ receiptId }: ReceiptDetailClientProps) {
 
   function applyReceipt(nextReceipt: ReceiptDetail) {
     setReceipt(nextReceipt);
-    setEditValues({
-      amount: nextReceipt.total_amount != null ? String(nextReceipt.total_amount) : "",
-      category: nextReceipt.category ?? "",
-      date: nextReceipt.receipt_date ?? "",
-      merchant: nextReceipt.merchant_name ?? "",
-      tag: nextReceipt.notes ?? "",
-    });
+    setEditValues(editValuesOf(nextReceipt));
   }
 
   const loadReceipt = useEffectEvent(async () => {
@@ -118,20 +128,19 @@ export function ReceiptDetailClient({ receiptId }: ReceiptDetailClientProps) {
   }, [receipt?.status, receiptId]);
 
   useEffect(() => {
-    if (receipt && !receipt.merchant_name) {
+    if (receipt && !receipt.merchant_name && receipt.status !== "processing") {
       merchantInputRef.current?.focus();
     }
   }, [receipt]);
 
   useEffect(() => {
-    if (!isImageViewerOpen && !isMoreMenuOpen) {
+    if (!isImageViewerOpen) {
       return;
     }
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         setIsImageViewerOpen(false);
-        setIsMoreMenuOpen(false);
       }
     };
 
@@ -139,10 +148,17 @@ export function ReceiptDetailClient({ receiptId }: ReceiptDetailClientProps) {
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [isImageViewerOpen, isMoreMenuOpen]);
+  }, [isImageViewerOpen]);
+
+  const amountInvalid = editValues.amount.trim() !== "" && parseAmount(editValues.amount) == null;
+  const vatInvalid = editValues.vat.trim() !== "" && parseAmount(editValues.vat) == null;
 
   async function handleSave() {
     if (!receipt) {
+      return;
+    }
+    if (amountInvalid || vatInvalid) {
+      setStatusBanner({ message: "Enter amounts as numbers, for example 12.50.", tone: "error" });
       return;
     }
 
@@ -156,8 +172,8 @@ export function ReceiptDetailClient({ receiptId }: ReceiptDetailClientProps) {
       merchant_name: editValues.merchant.trim() || null,
       notes: editValues.tag.trim() || null,
       receipt_date: editValues.date || null,
-      total_amount: editValues.amount ? Number(editValues.amount) : null,
-      vat_amount: receipt.vat_amount,
+      total_amount: parseAmount(editValues.amount),
+      vat_amount: parseAmount(editValues.vat),
     };
 
     const result = await updateReceiptFields(receipt.id, payload);
@@ -192,6 +208,51 @@ export function ReceiptDetailClient({ receiptId }: ReceiptDetailClientProps) {
       applyReceipt(refreshed.data);
     }
     setIsRetrying(false);
+  }
+
+  async function handlePhotoPicked(file: File | undefined) {
+    if (!file || !receipt) {
+      return;
+    }
+
+    setIsUploadingPhoto(true);
+    setStatusBanner(null);
+    try {
+      const user = await ensureBrowserSession();
+      if (!user) {
+        throw new Error("You need to sign in first.");
+      }
+      const jpeg = await imageFileToJpeg(file);
+      const attached = await attachReceiptImage(receipt.id, user.id, jpeg, receipt.image_path);
+      if (!attached.ok) {
+        throw new Error(attached.error);
+      }
+
+      // Re-save the current details so GardenWow (if connected) gets the photo.
+      await updateReceiptFields(receipt.id, {
+        category: receipt.category,
+        currency: receipt.currency,
+        folder_id: receipt.folder_id,
+        merchant_name: receipt.merchant_name,
+        notes: receipt.notes,
+        receipt_date: receipt.receipt_date,
+        total_amount: receipt.total_amount,
+        vat_amount: receipt.vat_amount,
+      });
+
+      const refreshed = await fetchReceipt();
+      if (refreshed.ok) {
+        applyReceipt(refreshed.data);
+      }
+      setStatusBanner({ message: "Photo saved.", tone: "info" });
+    } catch (error) {
+      setStatusBanner({
+        message: error instanceof Error ? error.message : "The photo couldn't be saved.",
+        tone: "error",
+      });
+    } finally {
+      setIsUploadingPhoto(false);
+    }
   }
 
   async function handleDeleteReceipt() {
@@ -234,8 +295,6 @@ export function ReceiptDetailClient({ receiptId }: ReceiptDetailClientProps) {
       }
     } catch {
       setStatusBanner({ message: "Could not share this receipt.", tone: "error" });
-    } finally {
-      setIsMoreMenuOpen(false);
     }
   }
 
@@ -245,62 +304,48 @@ export function ReceiptDetailClient({ receiptId }: ReceiptDetailClientProps) {
     }
 
     window.open(receipt.signed_image_url, "_blank", "noopener,noreferrer");
-    setIsMoreMenuOpen(false);
-  }
-
-  function handleAddNote() {
-    setActiveTab("info");
-    setIsMoreMenuOpen(false);
   }
 
   const isDirty = useMemo(() => {
     if (!receipt) {
       return false;
     }
-
-    return (
-      (receipt.merchant_name ?? "") !== editValues.merchant ||
-      (receipt.receipt_date ?? "") !== editValues.date ||
-      (receipt.category ?? "") !== editValues.category ||
-      (receipt.total_amount != null ? String(receipt.total_amount) : "") !== editValues.amount ||
-      (receipt.notes ?? "") !== editValues.tag
-    );
+    const saved = editValuesOf(receipt);
+    return (Object.keys(saved) as Array<keyof EditValues>).some((key) => saved[key] !== editValues[key]);
   }, [editValues, receipt]);
 
+  const isProcessing = receipt?.status === "processing";
+
   return (
-    <main className="app-shell app-shell-with-nav">
-      <section className="mx-auto w-full max-w-md pb-32">
-        <div className="mb-4 flex items-center justify-between">
-          <Link
-            href="/receipts"
-            className="secondary-button rounded-full px-4 py-2 text-sm transition"
-          >
+    <main className="min-h-dvh bg-[var(--surface)]">
+      <BrandHeader
+        title="Receipt"
+        left={
+          <Link href="/receipts" className="text-[1.05rem] font-semibold text-white">
             Close
           </Link>
-          <p className="text-sm font-semibold text-[var(--text-primary)]">Edit Receipt</p>
+        }
+        right={
           <button
             type="button"
-            onClick={() => setIsMoreMenuOpen(true)}
-            className="secondary-button rounded-full px-4 py-2 text-sm transition"
+            onClick={() => void handleSave()}
+            disabled={isSavingEdits || !isDirty}
+            className="text-[1.05rem] font-semibold text-white disabled:opacity-50"
           >
-            More
+            {isSavingEdits ? "Saving..." : "Save"}
           </button>
-        </div>
+        }
+      />
 
-        <section className="glass-panel rounded-[28px] p-3">
-          <div className="grid grid-cols-2 gap-2">
-            <DetailTabButton
-              active={activeTab === "info"}
-              label="Expense Info"
-              onClick={() => setActiveTab("info")}
-            />
-            <DetailTabButton
-              active={activeTab === "image"}
-              label="Expense Image"
-              onClick={() => setActiveTab("image")}
-            />
-          </div>
-        </section>
+      <section className="mx-auto max-w-md px-4 pt-4 pb-[calc(env(safe-area-inset-bottom,0px)+32px)]">
+        <Segmented
+          value={activeTab}
+          onChange={setActiveTab}
+          options={[
+            { label: "Expense Info", value: "info" },
+            { label: "Expense Image", value: "image" },
+          ]}
+        />
 
         {statusBanner ? (
           <div className="mt-4">
@@ -308,109 +353,102 @@ export function ReceiptDetailClient({ receiptId }: ReceiptDetailClientProps) {
           </div>
         ) : null}
 
-        {loading ? (
-          <div className="soft-card mt-4 rounded-[28px] p-6 text-sm text-[var(--text-secondary)]">
-            Loading receipt...
+        {loading && !receipt ? (
+          <p className="py-10 text-center text-sm text-[var(--text-secondary)]">Loading receipt...</p>
+        ) : null}
+
+        {receipt && isProcessing ? (
+          <div className="mt-4 rounded-xl bg-[var(--brand-tint)] px-4 py-3 text-sm font-semibold text-[var(--brand-strong)]">
+            Reading the receipt... the details will appear here in a few seconds.
           </div>
         ) : null}
 
-        {receipt && !loading ? (
-          <div className="mt-4 space-y-4">
-            <section className="glass-panel rounded-[28px] p-5">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <p className="text-sm font-semibold text-[var(--text-primary)]">
-                    {receipt.merchant_name ?? "Unknown merchant"}
-                  </p>
-                  <p className="mt-1 text-xs text-[var(--text-secondary)]">
-                    {formatReceiptDate(receipt.receipt_date, receipt.created_at)}
-                  </p>
-                </div>
-                <span className="rounded-full bg-[var(--surface-soft)] px-3 py-1 text-[11px] uppercase tracking-[0.14em] text-[var(--text-secondary)]">
-                  {receipt.status}
-                </span>
-              </div>
-              {receipt.extraction_error ? (
-                <div className="mt-4 flex items-start justify-between gap-3">
-                  <p
-                    className={`text-sm ${
-                      receipt.status === "failed"
-                        ? "text-[var(--danger)]"
-                        : "text-[var(--text-secondary)]"
-                    }`}
-                  >
-                    {receipt.extraction_error}
-                  </p>
-                  {receipt.status === "failed" ? (
-                    <button
-                      type="button"
-                      onClick={() => void handleRetry()}
-                      disabled={isRetrying}
-                      className="secondary-button shrink-0 rounded-full px-4 py-2 text-sm transition disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      {isRetrying ? "Reading..." : "Try again"}
-                    </button>
-                  ) : null}
-                </div>
-              ) : null}
-            </section>
-
-            {activeTab === "info" ? (
-              <section className="glass-panel rounded-[28px] p-5">
-                <div className="space-y-4">
-                  <InputField
-                    inputRef={merchantInputRef}
-                    label="Merchant"
-                    value={editValues.merchant}
-                    onChange={(value) =>
-                      setEditValues((current) => ({ ...current, merchant: value }))
-                    }
-                  />
-                  <InputField
-                    label="Date"
-                    type="date"
-                    value={editValues.date}
-                    onChange={(value) =>
-                      setEditValues((current) => ({ ...current, date: value }))
-                    }
-                  />
-                  <InputField
-                    label="Category"
-                    value={editValues.category}
-                    onChange={(value) =>
-                      setEditValues((current) => ({ ...current, category: value }))
-                    }
-                  />
-                  <InputField
-                    label="Amount"
-                    type="number"
-                    step="0.01"
-                    value={editValues.amount}
-                    onChange={(value) =>
-                      setEditValues((current) => ({ ...current, amount: value }))
-                    }
-                  />
-                  <InputField
-                    label="Tag"
-                    value={editValues.tag}
-                    onChange={(value) =>
-                      setEditValues((current) => ({ ...current, tag: value }))
-                    }
-                  />
-                </div>
-
-                <div className="mt-5 rounded-[22px] border border-[var(--border-soft)] bg-[var(--card-soft)] p-4">
-                  <p className="text-xs uppercase tracking-[0.16em] text-[var(--text-muted)]">
-                    OCR text
-                  </p>
-                  <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-[var(--text-secondary)]">
-                    {receipt.raw_ocr_text ?? "No OCR text captured."}
-                  </p>
-                </div>
-              </section>
+        {receipt?.extraction_error ? (
+          <div
+            className={`mt-4 flex items-start justify-between gap-3 rounded-xl px-4 py-3 text-sm ${
+              receipt.status === "failed" ? "danger-card" : "warning-card text-[var(--text-primary)]"
+            }`}
+          >
+            <p>{receipt.extraction_error}</p>
+            {receipt.status === "failed" && receipt.image_path ? (
+              <button
+                type="button"
+                onClick={() => void handleRetry()}
+                disabled={isRetrying}
+                className="shrink-0 rounded-full bg-white px-3 py-1.5 text-sm font-semibold text-[var(--text-primary)] disabled:opacity-60"
+              >
+                {isRetrying ? "Reading..." : "Try again"}
+              </button>
             ) : null}
+          </div>
+        ) : null}
 
-            {activeTab === "info" ? (
+        {receipt && activeTab === "info" ? (
+          <div className="mt-4">
+            <div className="space-y-2">
+              <FieldRow icon={<StoreIcon className="h-7 w-7" />}>
+                <input
+                  ref={merchantInputRef}
+                  className="line-field"
+                  placeholder="Supplier"
+                  value={editValues.merchant}
+                  onChange={(event) => setEditValues((current) => ({ ...current, merchant: event.target.value }))}
+                />
+              </FieldRow>
+              <FieldRow icon={<CalendarIcon className="h-7 w-7" />}>
+                <input
+                  type="date"
+                  className="line-field"
+                  value={editValues.date}
+                  onChange={(event) => setEditValues((current) => ({ ...current, date: event.target.value }))}
+                />
+              </FieldRow>
+              <FieldRow icon={<CategoryIcon className="h-7 w-7" />}>
+                <select
+                  className="line-field appearance-none"
+                  value={editValues.category}
+                  onChange={(event) => setEditValues((current) => ({ ...current, category: event.target.value }))}
+                >
+                  {editValues.category === "" ? <option value="">Choose a category</option> : null}
+                  {EXPENSE_CATEGORIES.map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </select>
+              </FieldRow>
+              <FieldRow icon={<AmountIcon className="h-7 w-7" />}>
+                <div className="flex items-center">
+                  <span className="text-[1.05rem]">{currencySymbol(receipt.currency)}</span>
+                  <input
+                    className={`line-field pl-1 ${amountInvalid ? "border-[var(--danger)]" : ""}`}
+                    inputMode="decimal"
+                    placeholder="Amount"
+                    value={editValues.amount}
+                    onChange={(event) => setEditValues((current) => ({ ...current, amount: event.target.value }))}
+                  />
+                </div>
+              </FieldRow>
+              <FieldRow icon={<span className="block w-7 text-center text-sm font-extrabold">VAT</span>}>
+                <input
+                  className={`line-field ${vatInvalid ? "border-[var(--danger)]" : ""}`}
+                  inputMode="decimal"
+                  placeholder="VAT (if shown on the receipt)"
+                  value={editValues.vat}
+                  onChange={(event) => setEditValues((current) => ({ ...current, vat: event.target.value }))}
+                />
+              </FieldRow>
+              <FieldRow icon={<TagIcon className="h-7 w-7" />}>
+                <input
+                  className="line-field"
+                  placeholder="Tag (e.g. client or job)"
+                  value={editValues.tag}
+                  onChange={(event) => setEditValues((current) => ({ ...current, tag: event.target.value }))}
+                />
+              </FieldRow>
+            </div>
+
+            <div className="mt-6">
               <GardenWowPanel
                 hasUnsavedChanges={isDirty}
                 receiptDate={receipt.receipt_date}
@@ -418,55 +456,100 @@ export function ReceiptDetailClient({ receiptId }: ReceiptDetailClientProps) {
                 refreshKey={receipt.updated_at}
                 userId={receipt.user_id}
               />
-            ) : (
-              <section className="glass-panel overflow-hidden rounded-[28px]">
-                {receipt.signed_image_url ? (
-                  <button
-                    type="button"
-                    onClick={() => setIsImageViewerOpen(true)}
-                    className="block w-full text-left"
-                  >
-                    <img
-                      src={receipt.signed_image_url}
-                      alt={receipt.merchant_name ?? "Receipt image"}
-                      className="h-auto max-h-[68dvh] w-full object-contain bg-[var(--surface-soft)]"
-                    />
-                  </button>
-                ) : (
-                  <div className="flex min-h-[360px] items-center justify-center text-sm text-[var(--text-muted)]">
-                    Receipt image unavailable
-                  </div>
-                )}
-              </section>
-            )}
+            </div>
+
+            {receipt.raw_ocr_text ? (
+              <details className="mt-6 rounded-xl bg-[var(--surface-soft)] px-4 py-3">
+                <summary className="cursor-pointer text-sm font-semibold text-[var(--text-secondary)]">
+                  Text read from the receipt
+                </summary>
+                <p className="mt-3 text-sm leading-6 whitespace-pre-wrap text-[var(--text-secondary)]">
+                  {receipt.raw_ocr_text}
+                </p>
+              </details>
+            ) : null}
+
+            <div className="mt-6 divide-y divide-[var(--border-soft)] border-y border-[var(--border-soft)]">
+              {receipt.signed_image_url ? (
+                <>
+                  <ActionRow label="Share" onClick={() => void handleShare()} />
+                  <ActionRow label="Print" onClick={handlePrint} />
+                </>
+              ) : null}
+              <ActionRow
+                danger
+                disabled={isDeleting}
+                label={isDeleting ? "Deleting..." : "Delete receipt"}
+                onClick={() => void handleDeleteReceipt()}
+              />
+            </div>
           </div>
         ) : null}
-      </section>
 
-      {receipt && activeTab === "info" ? (
-        <section className="floating-action-bar">
-          <div className="glass-panel rounded-[30px] px-4 py-4 shadow-[0_20px_60px_rgba(2,9,17,0.5)]">
-            <div className="flex items-center justify-between gap-4">
-              <div>
-                <p className="eyebrow">Expense Info</p>
-                <p className="mt-1 text-xs text-[var(--text-secondary)]">
-                  {receipt.currency
-                    ? formatCurrency(receipt.total_amount, normalizeCurrency(receipt.currency))
-                    : "Edit and save changes"}
-                </p>
-              </div>
+        {receipt && activeTab === "image" ? (
+          <div className="mt-4">
+            <input
+              ref={cameraInputRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              className="hidden"
+              onChange={(event) => {
+                void handlePhotoPicked(event.target.files?.[0]);
+                event.target.value = "";
+              }}
+            />
+            <input
+              ref={libraryInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(event) => {
+                void handlePhotoPicked(event.target.files?.[0]);
+                event.target.value = "";
+              }}
+            />
+
+            {receipt.signed_image_url ? (
+              <button type="button" onClick={() => setIsImageViewerOpen(true)} className="block w-full">
+                <img
+                  src={receipt.signed_image_url}
+                  alt={receipt.merchant_name ?? "Receipt image"}
+                  className="max-h-[62dvh] w-full rounded-xl bg-[var(--surface-soft)] object-contain"
+                />
+              </button>
+            ) : (
               <button
                 type="button"
-                onClick={() => void handleSave()}
-                disabled={isSavingEdits || !isDirty}
-                className="shrink-0 rounded-full bg-[var(--accent)] px-5 py-3 text-sm font-semibold text-[var(--text-on-accent)] transition hover:bg-[var(--accent-strong)] disabled:cursor-not-allowed disabled:opacity-60"
+                onClick={() => cameraInputRef.current?.click()}
+                className="flex h-[46dvh] w-full flex-col items-center justify-center gap-3 rounded-xl bg-[var(--surface-soft)] text-[var(--text-muted)]"
               >
-                {isSavingEdits ? "Saving..." : isDirty ? "Save changes" : "Saved"}
+                <ImageIcon className="h-20 w-20" />
+                <span className="text-lg">{isUploadingPhoto ? "Saving photo..." : "Add photo"}</span>
+              </button>
+            )}
+
+            <div className="mt-4 grid grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={() => cameraInputRef.current?.click()}
+                disabled={isUploadingPhoto || isProcessing}
+                className="rounded-lg bg-[var(--brand)] py-3 font-semibold text-white disabled:opacity-60"
+              >
+                {receipt.image_path ? "Retake photo" : "Take photo"}
+              </button>
+              <button
+                type="button"
+                onClick={() => libraryInputRef.current?.click()}
+                disabled={isUploadingPhoto || isProcessing}
+                className="secondary-button rounded-lg py-3 font-semibold disabled:opacity-60"
+              >
+                Choose from library
               </button>
             </div>
           </div>
-        </section>
-      ) : null}
+        ) : null}
+      </section>
 
       {receipt?.signed_image_url && isImageViewerOpen ? (
         <section
@@ -478,47 +561,22 @@ export function ReceiptDetailClient({ receiptId }: ReceiptDetailClientProps) {
               <button
                 type="button"
                 onClick={() => setIsImageViewerOpen(false)}
-                className="secondary-button rounded-full px-4 py-2 text-sm font-medium"
+                className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-[var(--text-primary)]"
               >
                 Close
               </button>
             </div>
             <div className="flex flex-1 items-center justify-center py-4">
               <div
-                className="max-h-full w-full max-w-4xl overflow-auto rounded-[28px]"
+                className="max-h-full w-full max-w-4xl overflow-auto rounded-2xl"
                 onClick={(event) => event.stopPropagation()}
               >
                 <img
                   src={receipt.signed_image_url}
                   alt={receipt.merchant_name ?? "Receipt image enlarged"}
-                  className="mx-auto h-auto w-full rounded-[28px] object-contain shadow-[0_24px_80px_rgba(0,0,0,0.35)]"
+                  className="mx-auto h-auto w-full rounded-2xl object-contain"
                 />
               </div>
-            </div>
-          </div>
-        </section>
-      ) : null}
-
-      {isMoreMenuOpen ? (
-        <section
-          className="fixed inset-0 z-[75] bg-[rgba(5,10,18,0.46)]"
-          onClick={() => setIsMoreMenuOpen(false)}
-        >
-          <div className="flex min-h-dvh items-end justify-center px-4 pb-[calc(env(safe-area-inset-bottom,0px)+16px)]">
-            <div
-              className="glass-panel w-full max-w-md rounded-[30px] p-3"
-              onClick={(event) => event.stopPropagation()}
-            >
-              <MoreMenuButton label="Add note" onClick={handleAddNote} />
-              <MoreMenuButton label="Share" onClick={() => void handleShare()} />
-              <MoreMenuButton label="Print" onClick={handlePrint} />
-              <MoreMenuButton
-                danger
-                disabled={isDeleting}
-                label={isDeleting ? "Deleting..." : "Delete"}
-                onClick={() => void handleDeleteReceipt()}
-              />
-              <MoreMenuButton label="Cancel" onClick={() => setIsMoreMenuOpen(false)} />
             </div>
           </div>
         </section>
@@ -527,61 +585,16 @@ export function ReceiptDetailClient({ receiptId }: ReceiptDetailClientProps) {
   );
 }
 
-function DetailTabButton({
-  active,
-  label,
-  onClick,
-}: {
-  active: boolean;
-  label: string;
-  onClick: () => void;
-}) {
+function FieldRow({ children, icon }: { children: React.ReactNode; icon: React.ReactNode }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`rounded-full px-4 py-2 text-sm font-medium transition ${
-        active
-          ? "bg-[var(--accent)] text-[var(--text-on-accent)]"
-          : "secondary-button"
-      }`}
-    >
-      {label}
-    </button>
-  );
-}
-
-function InputField({
-  inputRef,
-  label,
-  onChange,
-  step,
-  type = "text",
-  value,
-}: {
-  inputRef?: React.RefObject<HTMLInputElement | null>;
-  label: string;
-  onChange: (value: string) => void;
-  step?: string;
-  type?: string;
-  value: string;
-}) {
-  return (
-    <label className="block">
-      <span className="mb-2 block text-sm text-[var(--text-secondary)]">{label}</span>
-      <input
-        ref={inputRef}
-        type={type}
-        step={step}
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        className="field-control w-full rounded-2xl px-4 py-3 text-sm outline-none"
-      />
+    <label className="flex items-center gap-4 py-1">
+      <span className="shrink-0 text-[var(--brand)]">{icon}</span>
+      <span className="min-w-0 flex-1">{children}</span>
     </label>
   );
 }
 
-function MoreMenuButton({
+function ActionRow({
   danger = false,
   disabled = false,
   label,
@@ -597,13 +610,39 @@ function MoreMenuButton({
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className={`w-full rounded-[22px] px-4 py-4 text-left text-sm font-medium transition ${
-        danger
-          ? "text-[var(--danger)] hover:bg-[var(--danger-bg)]"
-          : "text-[var(--text-primary)] hover:bg-[var(--nav-hover)]"
-      } disabled:cursor-not-allowed disabled:opacity-60`}
+      className={`w-full px-1 py-4 text-left text-[1.05rem] font-semibold transition hover:bg-[var(--nav-hover)] disabled:opacity-60 ${
+        danger ? "text-[var(--danger)]" : "text-[var(--text-primary)]"
+      }`}
     >
       {label}
     </button>
   );
+}
+
+function emptyEditValues(): EditValues {
+  return { amount: "", category: "", date: "", merchant: "", tag: "", vat: "" };
+}
+
+function editValuesOf(receipt: ReceiptDetail): EditValues {
+  return {
+    amount: receipt.total_amount != null ? String(receipt.total_amount) : "",
+    // Older receipts may have a pre-HMRC label; show (and save) the matching HMRC category.
+    category: toExpenseCategory(receipt.category) ?? "",
+    date: receipt.receipt_date ?? "",
+    merchant: receipt.merchant_name ?? "",
+    tag: receipt.notes ?? "",
+    vat: receipt.vat_amount != null ? String(receipt.vat_amount) : "",
+  };
+}
+
+function parseAmount(value: string) {
+  const cleaned = value.replace(/[£$€,\s]/g, "");
+  if (!cleaned) return null;
+  const amount = Number(cleaned);
+  return Number.isFinite(amount) && amount >= 0 ? Math.round(amount * 100) / 100 : null;
+}
+
+function currencySymbol(currency: string | null) {
+  const code = (currency ?? "GBP").toUpperCase();
+  return code === "GBP" ? "£" : code === "EUR" ? "€" : code === "USD" ? "$" : `${code} `;
 }

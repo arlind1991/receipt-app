@@ -27,7 +27,7 @@ const RECEIPT_SELECT =
 
 type ReceiptForSync = {
   id: string;
-  image_path: string;
+  image_path: string | null;
   merchant_name: string | null;
   receipt_date: string | null;
   total_amount: number | null;
@@ -43,7 +43,7 @@ type ReceiptForSync = {
 export type SyncOutcome =
   | { state: "disabled" }
   | { state: "not_found" }
-  | { state: "waiting"; missing: Array<"date" | "total"> }
+  | { state: "waiting"; missing: Array<"date" | "total" | "photo"> }
   | { state: "removed" }
   | { state: "unchanged" }
   | { state: "sent"; created: boolean }
@@ -60,19 +60,28 @@ function targetOf(receipt: ReceiptForSync): GardenWowTarget {
 }
 
 function missingFields(receipt: ReceiptForSync) {
-  const missing: Array<"date" | "total"> = [];
+  const missing: Array<"date" | "total" | "photo"> = [];
   if (!receipt.receipt_date || !/^\d{4}-\d{2}-\d{2}$/.test(receipt.receipt_date)) missing.push("date");
   if (receipt.total_amount == null || !Number.isFinite(Number(receipt.total_amount))) missing.push("total");
+  if (!receipt.image_path) missing.push("photo");
   return missing;
 }
 
+export class GardenWowSetupError extends Error {}
+
 async function loadReceipt(supabase: AdminClient, receiptId: string, userId: string) {
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("receipts")
     .select(RECEIPT_SELECT)
     .eq("id", receiptId)
     .eq("user_id", userId)
     .maybeSingle<ReceiptForSync>();
+  // 42703 = undefined column: migration 006 hasn't been applied yet.
+  if (error?.code === "42703") {
+    throw new GardenWowSetupError(
+      "GardenWow isn't fully set up yet: the database update (migration 006) still needs to be run.",
+    );
+  }
   return data;
 }
 
@@ -123,7 +132,16 @@ export async function syncReceiptToGardenWow(
     return { state: "disabled" };
   }
 
-  const receipt = await loadReceipt(supabase, receiptId, userId);
+  let receipt: ReceiptForSync | null;
+  try {
+    receipt = await loadReceipt(supabase, receiptId, userId);
+  } catch (error) {
+    // Never let an unfinished GardenWow setup break reading or saving a receipt.
+    if (error instanceof GardenWowSetupError) {
+      return { state: "failed", message: error.message, status: 503 };
+    }
+    throw error;
+  }
   if (!receipt) {
     return { state: "not_found" };
   }
@@ -184,7 +202,7 @@ export async function syncReceiptToGardenWow(
 
   const { data: image, error: downloadError } = await supabase.storage
     .from("receipts")
-    .download(receipt.image_path);
+    .download(receipt.image_path!);
   if (downloadError || !image) {
     return recordFailure(supabase, receipt.id, userId, target, {
       message: "The receipt image could not be loaded.",
@@ -264,7 +282,7 @@ export async function removeReceiptFromGardenWow(
     return { ok: true };
   }
 
-  const receipt = await loadReceipt(supabase, receiptId, userId);
+  const receipt = await loadReceipt(supabase, receiptId, userId).catch(() => null);
   await saveLink(supabase, receiptId, userId, receipt ? targetOf(receipt) : emptyTarget(), {
     last_error: null,
     sent_hash: null,

@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { jsonSchemaOutputFormat } from "@anthropic-ai/sdk/helpers/json-schema";
 import sharp from "sharp";
+import { EXPENSE_CATEGORIES } from "@/lib/categories";
 import {
   looksLikeRefusal,
   type OpenAiStageDebug,
@@ -47,20 +48,7 @@ const RECEIPT_SCHEMA = {
     currency: { anyOf: [{ type: "string" }, { type: "null" }] },
     category: {
       anyOf: [
-        {
-          type: "string",
-          enum: [
-            "Groceries",
-            "Dining",
-            "Fuel",
-            "Travel",
-            "Healthcare",
-            "Shopping",
-            "Materials & Tools",
-            "Equipment Hire",
-            "Other",
-          ],
-        },
+        { type: "string", enum: EXPENSE_CATEGORIES },
         { type: "null" },
       ],
     },
@@ -108,7 +96,7 @@ Fields - read only what is printed; never guess or calculate:
 - total_amount: the final amount paid including VAT (TOTAL, BALANCE DUE, Invoice Total, amount charged to the card), not a subtotal, as a positive number.
 - vat_amount: the VAT amount only when it is printed as a money amount (for example in a VAT summary). Null if not printed. Never use a VAT registration number or a VAT rate.
 - currency: ISO 4217 code from the symbol or text (£ is GBP). Null if nothing indicates it.
-- category: the best fit for what was bought.
+- category: the HMRC Self Assessment expense category that best fits what was bought (for example fuel, parking and train fares are "Car, van and travel expenses"; materials, plants and supplies used on jobs are "Costs of goods bought for resale or goods used"; tool or equipment repairs are "Repairs and maintenance of property and equipment"). Use "Other business expenses" when nothing else fits.
 - confidence: per field, "high" only when every character is sharp and fully visible; "medium" when it's legible but slightly faint, creased or inferred from layout; "low" when any digit is blurred, faded, cut off at the edge of the photo, or could be read two ways. Still give your best reading of a low-confidence field. Use "high" for a field that is correctly null because it isn't printed.`;
 }
 

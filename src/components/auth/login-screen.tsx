@@ -84,9 +84,13 @@ export function LoginScreen() {
   }
 
   return (
-    <main className="app-shell flex min-h-[100dvh] items-center justify-center px-4 py-6">
-      <section className="glass-panel mx-auto w-full max-w-md rounded-[32px] p-6">
-        <p className="eyebrow">SnapReceipt</p>
+    <main className="flex min-h-[100dvh] flex-col">
+      <div className="brand-header px-6 pb-16 text-center">
+        <p className="pt-10 text-3xl font-extrabold tracking-tight">SnapReceipt</p>
+        <p className="mt-1 text-sm font-semibold text-white/85">Snap it, save it, sorted.</p>
+      </div>
+      <section className="glass-panel mx-4 -mt-10 w-auto max-w-md self-stretch rounded-2xl p-6 sm:mx-auto sm:w-full">
+        <p className="eyebrow">Welcome</p>
         <h1 className="mt-3 text-3xl font-semibold tracking-tight">
           {step === "email" ? "Sign in" : "Enter your code"}
         </h1>
