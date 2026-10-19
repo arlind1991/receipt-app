@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useRouter } from "next/navigation";
 import { StatusBanner } from "@/components/status-banner";
 import {
@@ -245,21 +245,42 @@ export function CameraCapture() {
       return null;
     }
 
-    const width = video.videoWidth;
-    const height = video.videoHeight;
-    if (!width || !height) {
+    const videoWidth = video.videoWidth;
+    const videoHeight = video.videoHeight;
+    if (!videoWidth || !videoHeight) {
       return null;
     }
 
-    const scale = Math.min(1, CAPTURE_MAX_EDGE / Math.max(width, height));
-    canvas.width = Math.max(1, Math.round(width * scale));
-    canvas.height = Math.max(1, Math.round(height * scale));
+    // The preview fills the screen (object-cover), so keep only the part of
+    // the frame that's on screen: the photo matches what the user framed.
+    const coverScale = Math.max(
+      (video.clientWidth || videoWidth) / videoWidth,
+      (video.clientHeight || videoHeight) / videoHeight,
+    );
+    const sourceWidth = Math.min(videoWidth, (video.clientWidth || videoWidth) / coverScale);
+    const sourceHeight = Math.min(videoHeight, (video.clientHeight || videoHeight) / coverScale);
+    const sourceX = (videoWidth - sourceWidth) / 2;
+    const sourceY = (videoHeight - sourceHeight) / 2;
+
+    const scale = Math.min(1, CAPTURE_MAX_EDGE / Math.max(sourceWidth, sourceHeight));
+    canvas.width = Math.max(1, Math.round(sourceWidth * scale));
+    canvas.height = Math.max(1, Math.round(sourceHeight * scale));
     const context = canvas.getContext("2d");
     if (!context) {
       return null;
     }
 
-    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+    context.drawImage(
+      video,
+      sourceX,
+      sourceY,
+      sourceWidth,
+      sourceHeight,
+      0,
+      0,
+      canvas.width,
+      canvas.height,
+    );
     return new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", CAPTURE_JPEG_QUALITY));
   }, []);
 
@@ -431,26 +452,33 @@ export function CameraCapture() {
   const twoSidedPrompt = !twoSidedFrames.front ? "Capture front" : "Capture back";
 
   return (
-    <main className="relative h-[100dvh] overflow-hidden bg-black text-white">
+    <main
+      className="relative h-[100dvh] overflow-hidden bg-black text-white"
+      style={{ "--camera-strip": "calc(env(safe-area-inset-bottom, 0px) + 88px)" } as CSSProperties}
+    >
       <section className="relative h-full w-full overflow-hidden">
-        <video
-          ref={videoRef}
-          autoPlay
-          playsInline
-          muted
-          className="h-full w-full object-contain"
-        />
-
-        {savingPreviewUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={savingPreviewUrl}
-            alt=""
-            className="absolute inset-0 z-[5] h-full w-full bg-black object-contain"
+        <div className="absolute inset-x-0 top-0 bottom-[var(--camera-strip)] overflow-hidden">
+          <video
+            ref={videoRef}
+            autoPlay
+            playsInline
+            muted
+            className="h-full w-full object-cover"
           />
-        ) : null}
 
-        <div className="pointer-events-none absolute inset-0 z-10 bg-[linear-gradient(180deg,var(--camera-top-fade),transparent_22%,transparent_68%,var(--camera-bottom-fade))]" />
+          {savingPreviewUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={savingPreviewUrl}
+              alt=""
+              className="absolute inset-0 z-[5] h-full w-full bg-black object-cover"
+            />
+          ) : null}
+
+          <div className="pointer-events-none absolute inset-0 z-10 bg-[linear-gradient(180deg,var(--camera-top-fade),transparent_22%,transparent_100%)]" />
+        </div>
+
+        <div className="absolute inset-x-0 bottom-0 z-10 h-[var(--camera-strip)] bg-black" />
 
         <div className="absolute inset-x-0 top-[calc(env(safe-area-inset-top,0px)+14px)] z-30 px-4">
           <button
@@ -511,7 +539,7 @@ export function CameraCapture() {
         </div>
 
         {submissionLabel ? (
-          <div className="absolute inset-x-0 bottom-[calc(env(safe-area-inset-bottom,0px)+138px)] z-20 flex justify-center px-6">
+          <div className="absolute inset-x-0 bottom-[calc(var(--camera-strip)+64px)] z-20 flex justify-center px-6">
             <div className="rounded-full bg-black/32 px-4 py-2 text-sm font-medium text-white/86 backdrop-blur-md">
               {submissionLabel}
             </div>
@@ -519,7 +547,7 @@ export function CameraCapture() {
         ) : null}
 
         {errorMessage ? (
-          <div className="absolute right-4 bottom-[calc(env(safe-area-inset-bottom,0px)+124px)] left-4 z-30">
+          <div className="absolute right-4 bottom-[calc(var(--camera-strip)+64px)] left-4 z-30">
             <StatusBanner tone="error" message={errorMessage} />
           </div>
         ) : null}
@@ -615,63 +643,55 @@ function CameraControls({
   return (
     <>
       {showTwoSidedHint ? (
-        <div className="absolute inset-x-0 bottom-[calc(env(safe-area-inset-bottom,0px)+132px)] z-20 flex justify-center px-5">
+        <div className="absolute inset-x-0 bottom-[calc(var(--camera-strip)+64px)] z-20 flex justify-center px-5">
           <div className="rounded-full border border-white/14 bg-black/28 px-4 py-2 text-sm font-medium text-white backdrop-blur-md">
             {shutterLabel} {twoSidedCount > 0 ? `(${twoSidedCount}/2)` : ""}
           </div>
         </div>
       ) : null}
 
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 px-6 pb-[calc(env(safe-area-inset-bottom,0px)+28px)]">
-        <div
-          className={`pointer-events-auto mx-auto flex max-w-md items-center ${
-            showMultipleControls ? "justify-between" : "justify-center"
-          }`}
+      {/* Shutter sits on the top edge of the bottom strip, half in and half out. */}
+      <div className="absolute inset-x-0 bottom-[calc(var(--camera-strip)-2.95rem)] z-20 flex justify-center">
+        <button
+          type="button"
+          aria-label="Capture receipt"
+          onClick={onCapture}
+          disabled={disabled}
+          className="flex h-[5.9rem] w-[5.9rem] items-center justify-center rounded-full border border-white/34 bg-white/10 p-[0.42rem] shadow-[0_22px_52px_rgba(0,0,0,0.36)] backdrop-blur-md transition active:scale-[0.98] disabled:opacity-40"
         >
-          {showMultipleControls ? (
-            <button
-              type="button"
-              onClick={onRemoveLast}
-              disabled={!canRemoveLast || disabled}
-              className="flex h-14 w-14 items-center justify-center rounded-full border border-white/14 bg-black/30 text-2xl text-white backdrop-blur-md disabled:opacity-30"
-            >
-              ×
-            </button>
-          ) : null}
-
-          <div className="flex flex-col items-center gap-3">
-            <button
-              type="button"
-              aria-label="Capture receipt"
-              onClick={onCapture}
-              disabled={disabled}
-              className="flex h-[5.9rem] w-[5.9rem] items-center justify-center rounded-full border border-white/34 bg-white/10 p-[0.42rem] shadow-[0_22px_52px_rgba(0,0,0,0.36)] backdrop-blur-md transition active:scale-[0.98] disabled:opacity-40"
-            >
-              <span className="capture-ring flex h-full w-full items-center justify-center rounded-full bg-white shadow-[0_0_32px_rgba(255,255,255,0.36)]">
-                <span className="h-[4.3rem] w-[4.3rem] rounded-full border border-[#d9dee7] bg-white" />
-              </span>
-            </button>
-            {showMultipleControls ? (
-              <div className="rounded-full bg-black/34 px-3 py-1 text-sm font-medium text-white backdrop-blur-md">
-                {multipleCount}
-              </div>
-            ) : (
-              <div className="h-5 w-24 rounded-full bg-white/6 backdrop-blur-sm" />
-            )}
-          </div>
-
-          {showMultipleControls ? (
-            <button
-              type="button"
-              onClick={onFinishMultiple}
-              disabled={!canFinishMultiple || disabled}
-              className="flex h-14 w-14 items-center justify-center rounded-full border border-white/14 bg-black/30 text-xl text-white backdrop-blur-md disabled:opacity-30"
-            >
-              ✓
-            </button>
-          ) : null}
-        </div>
+          <span className="capture-ring flex h-full w-full items-center justify-center rounded-full bg-white shadow-[0_0_32px_rgba(255,255,255,0.36)]">
+            <span className="h-[4.3rem] w-[4.3rem] rounded-full border border-[#d9dee7] bg-white" />
+          </span>
+        </button>
       </div>
+
+      {showMultipleControls ? (
+        <div className="absolute inset-x-0 bottom-[calc(env(safe-area-inset-bottom,0px)+16px)] z-20 flex justify-between px-8">
+          <button
+            type="button"
+            aria-label="Remove last photo"
+            onClick={onRemoveLast}
+            disabled={!canRemoveLast || disabled}
+            className="flex h-14 w-14 items-center justify-center rounded-full border border-white/14 bg-white/8 text-2xl text-white disabled:opacity-30"
+          >
+            ×
+          </button>
+          <button
+            type="button"
+            aria-label="Finish and save photos"
+            onClick={onFinishMultiple}
+            disabled={!canFinishMultiple || disabled}
+            className="relative flex h-14 w-14 items-center justify-center rounded-full border border-white/14 bg-white/8 text-xl text-white disabled:opacity-30"
+          >
+            ✓
+            {multipleCount > 0 ? (
+              <span className="absolute -top-1 -right-1 flex h-6 min-w-6 items-center justify-center rounded-full bg-white px-1.5 text-xs font-semibold text-black">
+                {multipleCount}
+              </span>
+            ) : null}
+          </button>
+        </div>
+      ) : null}
     </>
   );
 }
