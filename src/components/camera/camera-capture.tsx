@@ -16,20 +16,16 @@ import { ensureBrowserSession, supabaseEnvError } from "@/lib/supabase/session";
 import type { ReceiptProcessingQueueItem } from "@/lib/types";
 
 const UNSORTED_FOLDER_ID = "__unsorted__";
-const DEFAULT_CAMERA_ZOOM = 1.08;
+// The reader downsizes to this edge anyway (see receipt-ocr-claude), so a full
+// 4K frame only makes the upload slower.
+const CAPTURE_MAX_EDGE = 2576;
+const CAPTURE_JPEG_QUALITY = 0.85;
 
 type CaptureMode = "single" | "multiple" | "two-sided";
 
 type CapturedFrame = {
   blob: Blob;
   previewUrl: string;
-};
-
-type ZoomCapableMediaTrackCapabilities = MediaTrackCapabilities & {
-  zoom?: {
-    max: number;
-    min: number;
-  };
 };
 
 export function CameraCapture() {
@@ -61,10 +57,9 @@ export function CameraCapture() {
     back: CapturedFrame | null;
     front: CapturedFrame | null;
   }>({ back: null, front: null });
-  const [useCssZoomFallback, setUseCssZoomFallback] = useState(false);
+  const [savingPreviewUrl, setSavingPreviewUrl] = useState<string | null>(null);
 
   const hasSupabase = useMemo(() => !supabaseEnvError, []);
-  const videoScale = useCssZoomFallback ? DEFAULT_CAMERA_ZOOM : 1;
 
   useEffect(() => {
     multipleFramesRef.current = multipleFrames;
@@ -110,38 +105,6 @@ export function CameraCapture() {
     );
     setErrorMessage(null);
   }
-
-  const applyPreferredCameraZoom = useCallback(async (stream: MediaStream) => {
-    const [track] = stream.getVideoTracks();
-    if (!track) {
-      setUseCssZoomFallback(true);
-      return;
-    }
-
-    const capabilities = track.getCapabilities?.() as ZoomCapableMediaTrackCapabilities | undefined;
-    const zoomCapability = capabilities?.zoom;
-    if (
-      !zoomCapability ||
-      typeof zoomCapability.min !== "number" ||
-      typeof zoomCapability.max !== "number"
-    ) {
-      setUseCssZoomFallback(true);
-      return;
-    }
-
-    const safeZoom = Math.min(
-      Math.max(DEFAULT_CAMERA_ZOOM, zoomCapability.min, 1),
-      zoomCapability.max,
-    );
-
-    try {
-      await track.applyConstraints({
-        advanced: [{ zoom: safeZoom } as MediaTrackConstraintSet],
-      });
-    } catch {
-      setUseCssZoomFallback(true);
-    }
-  }, []);
 
   const readCameraPermissionState = useCallback(async () => {
     if (
@@ -195,8 +158,6 @@ export function CameraCapture() {
         });
 
         streamRef.current = stream;
-        setUseCssZoomFallback(false);
-        await applyPreferredCameraZoom(stream);
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
           await videoRef.current.play();
@@ -216,7 +177,7 @@ export function CameraCapture() {
     await startPromise.finally(() => {
       startCameraPromiseRef.current = null;
     });
-  }, [applyPreferredCameraZoom, readCameraPermissionState]);
+  }, [readCameraPermissionState]);
 
   // Pauses rather than stops the shared stream so iOS doesn't ask for camera
   // permission again next time (see lib/camera-stream).
@@ -277,7 +238,7 @@ export function CameraCapture() {
     }
   }
 
-  const captureFrameBlob = useCallback(async (quality = 0.9, maxDimension?: number) => {
+  const captureFrameBlob = useCallback(async () => {
     const video = videoRef.current;
     const canvas = canvasRef.current;
     if (!video || !canvas) {
@@ -290,7 +251,7 @@ export function CameraCapture() {
       return null;
     }
 
-    const scale = maxDimension ? Math.min(1, maxDimension / Math.max(width, height)) : 1;
+    const scale = Math.min(1, CAPTURE_MAX_EDGE / Math.max(width, height));
     canvas.width = Math.max(1, Math.round(width * scale));
     canvas.height = Math.max(1, Math.round(height * scale));
     const context = canvas.getContext("2d");
@@ -299,7 +260,7 @@ export function CameraCapture() {
     }
 
     context.drawImage(video, 0, 0, canvas.width, canvas.height);
-    return new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", quality));
+    return new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", CAPTURE_JPEG_QUALITY));
   }, []);
 
   async function handleCapture() {
@@ -339,6 +300,7 @@ export function CameraCapture() {
   async function finalizeSingle(frame: CapturedFrame) {
     setIsSubmitting(true);
     setSubmissionLabel("Saving receipt");
+    setSavingPreviewUrl(frame.previewUrl);
 
     try {
       await enqueueCapturedReceipts([frame.blob], [frame.previewUrl]);
@@ -348,6 +310,7 @@ export function CameraCapture() {
       );
       setIsSubmitting(false);
       setSubmissionLabel(null);
+      setSavingPreviewUrl(null);
       return;
     }
 
@@ -357,6 +320,7 @@ export function CameraCapture() {
   async function finalizeTwoSided(front: CapturedFrame, back: CapturedFrame) {
     setIsSubmitting(true);
     setSubmissionLabel("Saving 2-sided receipt");
+    setSavingPreviewUrl(back.previewUrl);
 
     try {
       const combinedBlob = await combineFramesVertically(front.blob, back.blob);
@@ -369,6 +333,7 @@ export function CameraCapture() {
       setSubmissionLabel(null);
       return;
     } finally {
+      setSavingPreviewUrl(null);
       revokeFrameUrls([front, back]);
       setTwoSidedFrames({ back: null, front: null });
     }
@@ -473,12 +438,17 @@ export function CameraCapture() {
           autoPlay
           playsInline
           muted
-          className="h-full w-full object-cover"
-          style={{
-            transform: `scale(${videoScale})`,
-            transformOrigin: "center center",
-          }}
+          className="h-full w-full object-contain"
         />
+
+        {savingPreviewUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={savingPreviewUrl}
+            alt=""
+            className="absolute inset-0 z-[5] h-full w-full bg-black object-contain"
+          />
+        ) : null}
 
         <div className="pointer-events-none absolute inset-0 z-10 bg-[linear-gradient(180deg,var(--camera-top-fade),transparent_22%,transparent_68%,var(--camera-bottom-fade))]" />
 
