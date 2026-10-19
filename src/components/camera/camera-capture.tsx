@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useRouter } from "next/navigation";
+import { AppNav } from "@/components/app-nav";
 import { StatusBanner } from "@/components/status-banner";
 import {
   enqueueReceiptProcessingItems,
@@ -455,7 +456,7 @@ export function CameraCapture() {
   return (
     <main
       className="relative h-[100dvh] overflow-hidden bg-black text-white"
-      style={{ "--camera-strip": "calc(env(safe-area-inset-bottom, 0px) + 88px)" } as CSSProperties}
+      style={{ "--camera-strip": "calc(env(safe-area-inset-bottom, 0px) + 69px)" } as CSSProperties}
     >
       <section className="relative h-full w-full overflow-hidden">
         <div className="absolute inset-x-0 top-0 bottom-[var(--camera-strip)] overflow-hidden">
@@ -479,7 +480,7 @@ export function CameraCapture() {
           <div className="pointer-events-none absolute inset-0 z-10 bg-[linear-gradient(180deg,var(--camera-top-fade),transparent_22%,transparent_100%)]" />
         </div>
 
-        <div className="absolute inset-x-0 bottom-0 z-10 h-[var(--camera-strip)] bg-black" />
+        <AppNav centerButton={false} />
 
         <div className="absolute inset-x-0 top-[calc(env(safe-area-inset-top,0px)+14px)] z-30 px-4">
           <button
@@ -651,8 +652,8 @@ function CameraControls({
         </div>
       ) : null}
 
-      {/* Shutter sits on the top edge of the bottom strip, half in and half out. */}
-      <div className="absolute inset-x-0 bottom-[calc(var(--camera-strip)-2.95rem)] z-20 flex justify-center">
+      {/* Shutter sits in the nav bar's middle slot, half over its top edge. */}
+      <div className="pointer-events-none absolute inset-x-0 bottom-[calc(var(--camera-strip)-2.95rem)] z-50 flex justify-center [&>button]:pointer-events-auto">
         <button
           type="button"
           aria-label="Capture receipt"
@@ -667,13 +668,13 @@ function CameraControls({
       </div>
 
       {showMultipleControls ? (
-        <div className="absolute inset-x-0 bottom-[calc(env(safe-area-inset-bottom,0px)+16px)] z-20 flex justify-between px-8">
+        <div className="pointer-events-none absolute inset-x-0 bottom-[calc(var(--camera-strip)+12px)] z-20 flex justify-between px-8 [&>button]:pointer-events-auto">
           <button
             type="button"
             aria-label="Remove last photo"
             onClick={onRemoveLast}
             disabled={!canRemoveLast || disabled}
-            className="flex h-14 w-14 items-center justify-center rounded-full border border-white/14 bg-white/8 text-2xl text-white disabled:opacity-30"
+            className="flex h-14 w-14 items-center justify-center rounded-full border border-white/14 bg-black/30 text-2xl text-white backdrop-blur-md disabled:opacity-30"
           >
             ×
           </button>
@@ -682,7 +683,7 @@ function CameraControls({
             aria-label="Finish and save photos"
             onClick={onFinishMultiple}
             disabled={!canFinishMultiple || disabled}
-            className="relative flex h-14 w-14 items-center justify-center rounded-full border border-white/14 bg-white/8 text-xl text-white disabled:opacity-30"
+            className="relative flex h-14 w-14 items-center justify-center rounded-full border border-white/14 bg-black/30 text-xl text-white backdrop-blur-md disabled:opacity-30"
           >
             ✓
             {multipleCount > 0 ? (

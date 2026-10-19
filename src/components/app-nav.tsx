@@ -21,7 +21,8 @@ const rightItems = [
 ];
 
 // Bottom tab bar shown on every main screen, with the add-receipt button in the middle.
-export function AppNav() {
+// The camera screen passes centerButton={false} and puts its shutter there instead.
+export function AppNav({ centerButton = true }: { centerButton?: boolean }) {
   const pathname = usePathname();
   const isActive = (href: string) =>
     href === "/receipts"
@@ -38,13 +39,15 @@ export function AppNav() {
           <NavLink key={item.href} {...item} active={isActive(item.href)} />
         ))}
         <div className="flex justify-center">
-          <Link
-            href="/receipts/new"
-            aria-label="Add receipt"
-            className="-mt-8 flex h-[62px] w-[62px] items-center justify-center rounded-full bg-[var(--pink)] text-white shadow-[0_8px_20px_rgba(242,56,107,0.4)] transition hover:bg-[var(--pink-strong)]"
-          >
-            <PlusIcon className="h-8 w-8" />
-          </Link>
+          {centerButton ? (
+            <Link
+              href="/receipts/new"
+              aria-label="Add receipt"
+              className="-mt-8 flex h-[62px] w-[62px] items-center justify-center rounded-full bg-[var(--pink)] text-white shadow-[0_8px_20px_rgba(242,56,107,0.4)] transition hover:bg-[var(--pink-strong)]"
+            >
+              <PlusIcon className="h-8 w-8" />
+            </Link>
+          ) : null}
         </div>
         {rightItems.map((item) => (
           <NavLink key={item.href} {...item} active={isActive(item.href)} />
