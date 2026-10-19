@@ -158,6 +158,7 @@ export function CameraCapture() {
         });
 
         streamRef.current = stream;
+        await zoomOutFully(stream);
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
           await videoRef.current.play();
@@ -694,6 +695,22 @@ function CameraControls({
       ) : null}
     </>
   );
+}
+
+// The full-screen preview crops the sides of the frame, so start from the
+// widest view the camera offers (below 1x on phones that expose a wide lens).
+async function zoomOutFully(stream: MediaStream) {
+  const [track] = stream.getVideoTracks();
+  const zoom = (track?.getCapabilities?.() as { zoom?: { min?: number } } | undefined)?.zoom;
+  if (!track || typeof zoom?.min !== "number") {
+    return;
+  }
+
+  try {
+    await track.applyConstraints({ advanced: [{ zoom: zoom.min } as MediaTrackConstraintSet] });
+  } catch {
+    // Not every browser lets the page change zoom; the default view is fine.
+  }
 }
 
 async function combineFramesVertically(front: Blob, back: Blob) {
